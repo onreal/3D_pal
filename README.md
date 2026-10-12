@@ -142,6 +142,7 @@ Without the script, stop any standalone viewer yourself before a session.
 | Symptom | Fix |
 | --- | --- |
 | The server shows as failed in `/mcp` or Claude Desktop | Run `./printpipe.sh mcp < /dev/null` in a terminal: it prints the reason (Docker not running, image not built). |
+| `/mcp` says CONNECTION_CLOSED, and the server was added as a plain `docker run …` command | Port 8080 is taken (often by `./printpipe.sh up`), so Docker refuses to start the container ("Bind for 127.0.0.1:8080 failed: port is already allocated"). Re-register through the script, which frees the port first: `./printpipe.sh mcp-add local` (or `user`). `claude mcp get print-pipeline` should then show Connected. |
 | "image print-pipeline:latest not found" | `./printpipe.sh build` |
 | Tools work but the viewer doesn't load | Another program holds port 8080: `PRINTPIPE_PORT=8090 ./printpipe.sh mcp-add` registers the session with that port. |
 | Very slow on Apple Silicon | Turn on Rosetta emulation in Docker Desktop settings. |
