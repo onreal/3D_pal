@@ -103,7 +103,10 @@ export class Viewer {
       max: geo.boundingBox!.max.toArray() as [number, number, number],
     });
     geo.translate(dx, dy, dz);
-    if (!geo.getAttribute("normal")) geo.computeVertexNormals();
+    // Flat face normals from the geometry itself: STL files often carry zero or wrong normals,
+    // and the overhang check depends on them.
+    geo.deleteAttribute("normal");
+    geo.computeVertexNormals();
     geo.computeBoundingBox();
     geo.computeBoundingSphere();
 

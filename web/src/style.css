@@ -77,6 +77,7 @@ label.inline { display: inline-flex; align-items: center; gap: 4px; }
 input[type="range"] { accent-color: var(--accent); }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); width: 16px; height: 16px; }
 .button input[type="file"] { display: none; }
+.card label.button { display: inline-flex; flex-direction: row; width: fit-content; }
 
 /* ---- viewer page ---- */
 .app { display: flex; flex-direction: column; height: 100vh; }

@@ -143,7 +143,7 @@ export class SettingsPage {
         secret.addEventListener("focus", () => { if (secret.value === MASK) secret.select(); });
       }
     }
-    return h("label", {}, f.label, f.required ? h("span", { class: "req", "aria-hidden": "true" }, " *") : null, input, f.help ? h("small", { class: "muted" }, f.help) : null);
+    return h("label", {}, h("span", {}, f.label, f.required ? h("span", { class: "req", "aria-hidden": "true" }, " *") : null), input, f.help ? h("small", { class: "muted" }, f.help) : null);
   }
 
   private profilePicker(p: PrinterSettings, kind: string) {
@@ -176,7 +176,7 @@ export class SettingsPage {
       return h("div", { class: "upload" },
         h("h3", {}, `${PROFILE_LABELS[kind]} profiles`),
         inUse.length ? h("ul", { class: "profiles" }, ...inUse.map((x) => this.profileRow(x))) : h("p", { class: "muted small" }, "None uploaded."),
-        file);
+        h("label", { class: "button small-button" }, `Upload ${kind} JSON…`, file));
     });
     return h("section", { class: "card" },
       h("h2", {}, "Slicer"),

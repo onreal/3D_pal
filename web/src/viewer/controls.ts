@@ -16,7 +16,7 @@ export function fitDistance(radius: number, fovDeg: number, aspect: number): num
   const v = (fovDeg * Math.PI) / 180;
   const h = 2 * Math.atan(Math.tan(v / 2) * aspect);
   const fov = Math.min(v, h);
-  return (radius / Math.sin(fov / 2)) * 1.1;
+  return (radius / Math.sin(fov / 2)) * 1.35;
 }
 
 /** Orbit, pan and zoom, preset views and fit-to-model (PRD V-3). */
