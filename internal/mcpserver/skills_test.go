@@ -11,6 +11,7 @@ import (
 	"github.com/margarit/printpipe/internal/mcpserver"
 	"github.com/margarit/printpipe/internal/mesh"
 	"github.com/margarit/printpipe/internal/pipeline/pipelinetest"
+	"github.com/margarit/printpipe/skills"
 )
 
 func connectWithAssembly(t *testing.T) (*mcp.ClientSession, *pipelinetest.Env) {
@@ -31,11 +32,17 @@ func connectWithAssembly(t *testing.T) (*mcp.ClientSession, *pipelinetest.Env) {
 	return cs, env
 }
 
-func TestGuidesAreResources(t *testing.T) {
+func TestSkillIsServedAsResources(t *testing.T) {
 	cs, _ := connectWithAssembly(t)
 	list, err := cs.ListResources(ctx, nil)
-	if err != nil || len(list.Resources) != 2 {
-		t.Fatalf("%v %+v", err, list)
+	if err != nil || len(list.Resources) != len(skills.Docs()) {
+		t.Fatalf("%v: %d resources, want %d", err, len(list.Resources), len(skills.Docs()))
+	}
+	for _, d := range skills.Docs() {
+		r, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: d.URI})
+		if err != nil || len(r.Contents) != 1 || r.Contents[0].Text != skills.MustRead(d.Path) || r.Contents[0].MIMEType != d.MIMEType {
+			t.Errorf("%s: %v", d.URI, err)
+		}
 	}
 	r, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: mcpserver.AssemblyGuideURI})
 	if err != nil {
@@ -50,12 +57,49 @@ func TestGuidesAreResources(t *testing.T) {
 	if r, _ := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: mcpserver.ModelingGuideURI}); !strings.Contains(r.Contents[0].Text, "Customizer") {
 		t.Error("modelling guide")
 	}
+	if r, _ := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "printpipe://skill"}); !strings.Contains(r.Contents[0].Text, "name: printpipe-cad") {
+		t.Error("skill overview")
+	}
+}
+
+func TestEveryPrompt(t *testing.T) {
+	cs, _ := connectWithAssembly(t)
+	list, err := cs.ListPrompts(ctx, nil)
+	if err != nil || len(list.Prompts) != 6 {
+		t.Fatalf("%v %+v", err, list)
+	}
+	for _, c := range []struct {
+		name string
+		args map[string]string
+		want []string
+	}{
+		{"design_part", map[string]string{"request": "a pipe clamp", "project": "clamp"}, []string{"a pipe clamp", "project clamp", "printpipe://templates/single-part", "Wall Hook", "printpipe://guides/printability"}},
+		{"design_assembly", map[string]string{"request": "a box with a lid"}, []string{"a box with a lid", "get_assembly", "check_interference", "slightly negative", "Snap Box", "printpipe://guides/multi-part"}},
+		{"review_model", map[string]string{"project": "upio-orbit"}, []string{`get_model for "upio-orbit"`, "Review checklist", "most serious first"}},
+		{"tune_fit", map[string]string{"project": "box", "problem": "lid too tight"}, []string{"The user reports: lid too tight", "coupon_", "Clearances"}},
+		{"print_model", map[string]string{"project": "box", "part": "lid"}, []string{`the "lid" option`, "list_printers", "request_approval", "never assembled", "print_job"}},
+	} {
+		res, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: c.name, Arguments: c.args})
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		text := res.Messages[0].Content.(*mcp.TextContent).Text
+		for _, w := range c.want {
+			if !strings.Contains(text, w) {
+				t.Errorf("%s prompt is missing %q", c.name, w)
+			}
+		}
+		if _, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: c.name}); err == nil {
+			t.Errorf("%s accepted no arguments", c.name)
+		}
+	}
 }
 
 func TestAssemblyPrompt(t *testing.T) {
 	cs, _ := connectWithAssembly(t)
 	list, err := cs.ListPrompts(ctx, nil)
-	if err != nil || len(list.Prompts) != 2 {
+	if err != nil || len(list.Prompts) != 6 {
 		t.Fatalf("%v %+v", err, list)
 	}
 	res, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "add_assembly_timeline", Arguments: map[string]string{"project": "upio-orbit", "order": "cap, ring, sun"}})

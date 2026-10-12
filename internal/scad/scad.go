@@ -49,6 +49,13 @@ var Cameras = map[string][3]int{
 // Compile writes stl from scad with the given -D arguments. A non-zero exit or an empty
 // mesh returns OpenSCAD's own message so the agent can fix the code.
 func (c *Compiler) Compile(ctx context.Context, scadPath, stlPath string, defines []string) (*mesh.Mesh, error) {
+	m, _, err := c.CompileLog(ctx, scadPath, stlPath, defines)
+	return m, err
+}
+
+// CompileLog is Compile that also returns the model's messages: its echo() lines and
+// OpenSCAD's warnings, which models use to report their own checks.
+func (c *Compiler) CompileLog(ctx context.Context, scadPath, stlPath string, defines []string) (*mesh.Mesh, []string, error) {
 	os.Remove(stlPath)
 	args := []string{"-o", stlPath, "--export-format", "binstl"}
 	if c.backend != "" {
@@ -56,18 +63,59 @@ func (c *Compiler) Compile(ctx context.Context, scadPath, stlPath string, define
 	}
 	args = append(args, defines...)
 	args = append(args, scadPath)
-	out, err := c.run.Run(ctx, c.binary, args...)
-	if err != nil {
-		return nil, fmt.Errorf("OpenSCAD could not compile the model:\n%s", cleanError(err.Error()))
+	var out, log []byte
+	var err error
+	if l, ok := c.run.(runner.Logger); ok {
+		out, log, err = l.RunLog(ctx, c.binary, args...)
+	} else {
+		out, err = c.run.Run(ctx, c.binary, args...)
 	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("OpenSCAD could not compile the model:\n%s", cleanError(err.Error()))
+	}
+	msgs := Messages(append(append([]byte{}, out...), log...))
 	m, err := mesh.ReadFile(stlPath)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, mesh.ErrEmpty) {
-		return nil, fmt.Errorf("OpenSCAD produced no geometry: the top-level object is empty. Make sure the file calls a module or draws a shape at the top level.%s", tail(out))
+		return nil, msgs, fmt.Errorf("OpenSCAD produced no geometry: the top-level object is empty. Make sure the file calls a module or draws a shape at the top level.%s", tail(append(out, log...)))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading the compiled STL: %w", err)
+		return nil, msgs, fmt.Errorf("reading the compiled STL: %w", err)
 	}
-	return m, nil
+	return m, msgs, nil
+}
+
+// MaxMessages caps how many echo and warning lines a compile reports.
+const MaxMessages = 40
+
+var message = regexp.MustCompile(`^(ECHO|WARNING|DEPRECATED): `)
+
+// Messages picks the echo() lines and warnings out of OpenSCAD's output, in order,
+// without duplicates. ECHO: "text" becomes text.
+func Messages(out []byte) []string {
+	var msgs []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !message.MatchString(line) {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "ECHO: "); ok {
+			line = rest
+			if len(line) >= 2 && line[0] == '"' && line[len(line)-1] == '"' && !strings.Contains(line[1:len(line)-1], `"`) {
+				line = line[1 : len(line)-1]
+			}
+		}
+		if seen[line] {
+			continue
+		}
+		seen[line] = true
+		if len(msgs) == MaxMessages {
+			msgs = append(msgs, "(more messages cut)")
+			break
+		}
+		msgs = append(msgs, line)
+	}
+	return msgs
 }
 
 // Render draws a PNG of the compiled STL from one preview angle, so the agent sees

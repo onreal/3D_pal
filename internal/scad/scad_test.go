@@ -116,3 +116,30 @@ func TestManifoldBackendWhenAvailable(t *testing.T) {
 		t.Fatalf("args: %s", line)
 	}
 }
+
+func TestCompileReturnsEchoAndWarnings(t *testing.T) {
+	dir := t.TempDir()
+	f := &runner.Fake{OnRun: func(name string, args []string) ([]byte, error) {
+		out := "Parsing design (AST generation)...\nECHO: \"gap 0.2 mm\"\nECHO: \"gap 0.2 mm\"\nECHO: \"ratio\", 0.714\nWARNING: Ignoring unknown variable \"x\" in file model.scad, line 3\nTotal rendering time: 0:00:01\n"
+		return []byte(out), os.WriteFile(outPath(args), mesh.Cube(1, 1, 1), 0o644)
+	}}
+	_, msgs, err := scad.New(f, "").CompileLog(context.Background(), "m.scad", filepath.Join(dir, "m.stl"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"gap 0.2 mm", `"ratio", 0.714`, `WARNING: Ignoring unknown variable "x" in file model.scad, line 3`}
+	if strings.Join(msgs, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q", msgs)
+	}
+}
+
+func TestMessagesAreCapped(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < scad.MaxMessages+10; i++ {
+		b.WriteString("ECHO: " + strings.Repeat("x", i+1) + "\n")
+	}
+	msgs := scad.Messages([]byte(b.String()))
+	if len(msgs) != scad.MaxMessages+1 || msgs[len(msgs)-1] != "(more messages cut)" {
+		t.Fatalf("%d messages, last %q", len(msgs), msgs[len(msgs)-1])
+	}
+}

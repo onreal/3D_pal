@@ -115,8 +115,8 @@ func (s *Service) Start(v project.Version) Result {
 			s.mu.Lock()
 			delete(s.inflight, key)
 			s.mu.Unlock()
+			s.publish(r) // before close, so whoever waits on done sees it published
 			close(done)
-			s.publish(r)
 		}()
 	}
 	s.mu.Unlock()

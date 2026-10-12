@@ -2,7 +2,6 @@ package mcpserver
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"strings"
 
@@ -10,32 +9,44 @@ import (
 
 	"github.com/margarit/printpipe/internal/assembly"
 	"github.com/margarit/printpipe/internal/pipeline"
+	"github.com/margarit/printpipe/skills"
 )
 
-// Guides are served as MCP resources, and the prompts hand them to the agent.
+// The printpipe-cad skill (package skills) is served as MCP resources, and the prompts
+// hand the right parts of it to the agent for each task.
 var (
-	//go:embed guides/assembly.md
-	assemblyGuide string
-	//go:embed guides/modeling.md
-	modelingGuide string
-)
-
-const (
-	AssemblyGuideURI = "printpipe://guides/assembly"
-	ModelingGuideURI = "printpipe://guides/modeling"
+	AssemblyGuideURI = skills.GuideURI("assembly")
+	ModelingGuideURI = skills.GuideURI("modeling")
 )
 
 func addGuides(s *mcp.Server) {
-	for _, g := range []struct{ uri, name, title, desc, text string }{
-		{AssemblyGuideURI, "assembly-guide", "Assembly timeline guide", "How to declare a model's build order so the viewer can play its parts into place one by one.", assemblyGuide},
-		{ModelingGuideURI, "modeling-guide", "Modelling guide", "Customizer parameters, part options and printability rules for this pipeline.", modelingGuide},
-	} {
-		text := g.text
-		s.AddResource(&mcp.Resource{URI: g.uri, Name: g.name, Title: g.title, Description: g.desc, MIMEType: "text/markdown"},
+	for _, d := range skills.Docs() {
+		text, mime := skills.MustRead(d.Path), d.MIMEType
+		s.AddResource(&mcp.Resource{URI: d.URI, Name: d.Name, Title: d.Title, Description: d.Description, MIMEType: mime},
 			func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-				return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "text/markdown", Text: text}}}, nil
+				return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: mime, Text: text}}}, nil
 			})
 	}
+}
+
+// attach appends documents of the skill to a prompt, each under its resource URI.
+func attach(b *strings.Builder, names ...string) {
+	for _, n := range names {
+		d, _ := skills.Find(n)
+		fmt.Fprintf(b, "\n\n---\n\n<!-- %s -->\n", d.URI)
+		if d.MIMEType != "text/markdown" {
+			fmt.Fprintf(b, "```openscad\n%s\n```", strings.TrimSpace(skills.MustRead(d.Path)))
+			continue
+		}
+		b.WriteString(strings.TrimSpace(skills.MustRead(d.Path)))
+	}
+}
+
+func orName(project, fallback string) string {
+	if project == "" {
+		return fallback
+	}
+	return project
 }
 
 // AssemblyPrompt is the step-by-step task the add_assembly_timeline prompt gives the agent.
@@ -52,62 +63,149 @@ func AssemblyPrompt(project, order string) string {
 	b.WriteString("3. Add the `assembly` declaration, `assembly_only` and the `step()` wrappers as the guide below shows. Give every step its own color(). Keep or add an \"assembled\" option on the `part` parameter. Don't change any part's geometry or position.\n")
 	fmt.Fprintf(&b, "4. Compile the full new code with compile_model (project %q). The summary must say \"Assembly: N steps\".\n", project)
 	fmt.Fprintf(&b, "5. Call get_assembly for %q. Every step must render, with the counts you expect. Fix and recompile until it reports no problems.\n", project)
-	b.WriteString("6. Tell the user the build order you chose, and to open the Assembly tab in the viewer and press Play.\n\n")
-	b.WriteString("---\n\n")
-	b.WriteString(assemblyGuide)
+	b.WriteString("6. Tell the user the build order you chose, and to open the Assembly tab in the viewer and press Play.")
+	attach(&b, "assembly")
 	return b.String()
 }
 
-func addPrompts(s *mcp.Server) {
-	s.AddPrompt(&mcp.Prompt{
-		Name:        "add_assembly_timeline",
-		Title:       "Add an assembly timeline",
-		Description: "Declare a model's build order so the viewer's Assembly tab plays its parts into place one by one, then check it with get_assembly.",
-		Arguments: []*mcp.PromptArgument{
-			{Name: "project", Description: "The project to add the timeline to", Required: true},
-			{Name: "order", Description: "Optional build order in your own words, e.g. \"bottom cap, ring, carrier, sun, planets, cover, top cap\""},
-		},
-	}, func(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-		project := strings.TrimSpace(req.Params.Arguments["project"])
-		if project == "" {
-			return nil, fmt.Errorf("the project argument is required")
+// DesignPartPrompt is the task for a new single-part model.
+func DesignPartPrompt(request, project string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Design this part for the print pipeline: %s\n\n", request)
+	b.WriteString("Follow the printpipe-cad house format (overview, modelling and printability guides and the single-part template below).\n\n")
+	b.WriteString("1. Pin down the dimensions it must fit, the material and the printer (list_printers gives the build volume). Ask the user for any measurement you would otherwise guess.\n")
+	b.WriteString("2. Choose the print orientation first: biggest flat face down, loads along the layers, no overhang over 45 degrees.\n")
+	fmt.Fprintf(&b, "3. Write the model from the template, in the house format, and compile it with compile_model (project %s).\n", orName(project, "a short descriptive name"))
+	b.WriteString("4. Read the summary (size, fit, INFO lines, warnings) and look at the previews; fix and recompile until it is right and has no warnings.\n")
+	fmt.Fprintf(&b, "5. If it has to fit something, add a coupon_* option (%s).\n", skills.GuideURI("fits"))
+	b.WriteString("6. Call estimate_print and tell the user the time, filament and cost. Print only if they ask (print_model prompt, or the tools guide).")
+	attach(&b, "skill", "modeling", "printability", "single-part-template")
+	return b.String()
+}
+
+// DesignAssemblyPrompt is the task for a new object with several printed parts.
+func DesignAssemblyPrompt(request, project string) string {
+	var b strings.Builder
+	p := orName(project, "a short descriptive name")
+	fmt.Fprintf(&b, "Design this multi-part object for the print pipeline: %s\n\n", request)
+	fmt.Fprintf(&b, "Follow the printpipe-cad house format. Read %s and %s for mating features and %s for the checks.\n\n", skills.GuideURI("fits"), skills.GuideURI("printability"), skills.GuideURI("validation"))
+	b.WriteString("1. List the parts, how each one prints, and how they join (multi-part guide). Ask the user for any dimension or hardware you would otherwise guess.\n")
+	b.WriteString("2. Write one file from the multi-part template: a module per part in print orientation on z = 0, shared interface dimensions with named clearances, placements, assembled/exploded/section, plate, coupon_* and check_interference options, and the assembly declaration.\n")
+	fmt.Fprintf(&b, "3. Compile it with compile_model (project %s), then compile each printable part with params {\"part\": ...} and look at every preview. Fix every warning.\n", p)
+	b.WriteString("4. Compile assembled and call get_assembly until it reports no problems.\n")
+	b.WriteString("5. Compile check_interference: clean is Size 2.0 x 2.0 x 2.0 mm. For moving parts check several positions. Then compile it once with a clearance set slightly negative and confirm the clash appears.\n")
+	b.WriteString("6. Estimate the plate or each part, and tell the user the parts list, the build order, which coupon to print first, and the time and cost.")
+	attach(&b, "skill", "multi-part", "assembly", "multi-part-template")
+	return b.String()
+}
+
+// ReviewPrompt is the task for auditing an existing project against the house format.
+func ReviewPrompt(project string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Review the print pipeline project %q against the printpipe-cad house format and quality bar.\n\n", project)
+	fmt.Fprintf(&b, "1. Call get_model for %q and read the code and parameters.\n", project)
+	b.WriteString("2. Compile each part option with params only (empty scad_code) and look at the summaries and previews. For assemblies also run get_assembly and check_interference.\n")
+	b.WriteString("3. Go through the review checklist below item by item.\n")
+	b.WriteString("4. Report what you found, most serious first: what is wrong, why it matters for the print, and the fix. Change the model only after the user agrees, then recompile and check again.")
+	attach(&b, "validation", "printability", "modeling")
+	return b.String()
+}
+
+// TuneFitPrompt is the task for adjusting a fit after a test print.
+func TuneFitPrompt(project, problem string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Tune a fit in the print pipeline project %q.", project)
+	if problem != "" {
+		fmt.Fprintf(&b, " The user reports: %s", problem)
+	}
+	b.WriteString("\n\n")
+	fmt.Fprintf(&b, "1. Call get_model for %q. Find the [Fit] parameters for the parts involved.\n", project)
+	b.WriteString("2. Map the problem to a parameter and a change with the tables below (usually 0.05 mm per side per step). Ask the user if the symptom is unclear.\n")
+	b.WriteString("3. Recompile with params only (empty scad_code). If the model has a coupon_* option for this fit, compile that coupon so the user can test before reprinting the part.\n")
+	b.WriteString("4. Tell the user what you changed, from what to what, and what to print next.")
+	attach(&b, "fits", "troubleshooting")
+	return b.String()
+}
+
+// PrintPrompt is the task for printing a part of a project.
+func PrintPrompt(project, part string) string {
+	var b strings.Builder
+	what := "the part the user wants"
+	if part != "" {
+		what = fmt.Sprintf("the %q option", part)
+	}
+	fmt.Fprintf(&b, "Print %s of the print pipeline project %q.\n\n", what, project)
+	b.WriteString("1. Call list_printers. With no printer configured, stop and ask the user to add one in the viewer.\n")
+	fmt.Fprintf(&b, "2. Call get_model for %q. Pick a printable option: a part, plate or coupon, never assembled, exploded, section or check_*.\n", project)
+	b.WriteString("3. Compile that option as its own version with params only, unless the latest version already is it. The summary must say it fits the printer.\n")
+	b.WriteString("4. Call estimate_print and tell the user the time, filament and cost. Use slice_model with supports off if you need to see whether it needs supports.\n")
+	b.WriteString("5. Call request_approval for that version and ask the user to review it in the viewer and click Approve. Wait for them.\n")
+	b.WriteString("6. Call print_job with the job_id. Only then say it is printing. Use printer_status when asked how it is going; cancel_print only if the user asks to stop.")
+	attach(&b, "tools")
+	return b.String()
+}
+
+type promptArg struct {
+	name, desc string
+	required   bool
+}
+
+func addPrompt(s *mcp.Server, name, title, desc string, args []promptArg, build func(map[string]string) (string, string)) {
+	p := &mcp.Prompt{Name: name, Title: title, Description: desc}
+	for _, a := range args {
+		p.Arguments = append(p.Arguments, &mcp.PromptArgument{Name: a.name, Description: a.desc, Required: a.required})
+	}
+	s.AddPrompt(p, func(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		in := map[string]string{}
+		for _, a := range args {
+			in[a.name] = strings.TrimSpace(req.Params.Arguments[a.name])
+			if a.required && in[a.name] == "" {
+				return nil, fmt.Errorf("the %s argument is required", a.name)
+			}
 		}
+		summary, text := build(in)
 		return &mcp.GetPromptResult{
-			Description: "Add an assembly timeline to " + project,
-			Messages: []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{
-				Text: AssemblyPrompt(project, strings.TrimSpace(req.Params.Arguments["order"])),
-			}}},
-		}, nil
-	})
-	s.AddPrompt(&mcp.Prompt{
-		Name:        "design_part",
-		Title:       "Design a printable part",
-		Description: "Design a part the pipeline can print: Customizer parameters, preview check, estimate, then approval.",
-		Arguments: []*mcp.PromptArgument{
-			{Name: "request", Description: "What to make, e.g. \"a wall bracket for a 25 mm pipe\"", Required: true},
-			{Name: "project", Description: "Project name (letters, digits, - and _)"},
-		},
-	}, func(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-		request := strings.TrimSpace(req.Params.Arguments["request"])
-		if request == "" {
-			return nil, fmt.Errorf("the request argument is required")
-		}
-		project := strings.TrimSpace(req.Params.Arguments["project"])
-		if project == "" {
-			project = "a short descriptive name"
-		}
-		text := fmt.Sprintf("Design this part for the print pipeline: %s\n\n"+
-			"1. Write OpenSCAD with named Customizer parameters (guide below) and compile it with compile_model, project %s.\n"+
-			"2. Look at the preview images; fix wrong geometry and recompile.\n"+
-			"3. If it has several parts, add an assembly timeline (%s).\n"+
-			"4. Call estimate_print and tell the user the time, filament and cost.\n"+
-			"5. When the user wants it printed, call request_approval, ask them to click Approve in the viewer, then call print_job.\n\n---\n\n%s",
-			request, project, AssemblyGuideURI, modelingGuide)
-		return &mcp.GetPromptResult{
-			Description: "Design " + request,
+			Description: summary,
 			Messages:    []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: text}}},
 		}, nil
 	})
+}
+
+func addPrompts(s *mcp.Server) {
+	project := promptArg{"project", "The project name (letters, digits, - and _)", true}
+	newProject := promptArg{"project", "Project name for the new model (letters, digits, - and _)", false}
+	request := promptArg{"request", "What to make, e.g. \"a wall bracket for a 25 mm pipe\"", true}
+	addPrompt(s, "design_part", "Design a printable part",
+		"Design a single printable part in the house format: Customizer parameters, checks, preview review and an estimate.",
+		[]promptArg{request, newProject}, func(in map[string]string) (string, string) {
+			return "Design " + in["request"], DesignPartPrompt(in["request"], in["project"])
+		})
+	addPrompt(s, "design_assembly", "Design a multi-part object",
+		"Design an object made of several printed parts: part options, interfaces with named clearances, assembly timeline, interference check, coupons and plate.",
+		[]promptArg{request, newProject}, func(in map[string]string) (string, string) {
+			return "Design " + in["request"], DesignAssemblyPrompt(in["request"], in["project"])
+		})
+	addPrompt(s, "add_assembly_timeline", "Add an assembly timeline",
+		"Declare a model's build order so the viewer's Assembly tab plays its parts into place one by one, then check it with get_assembly.",
+		[]promptArg{{"project", "The project to add the timeline to", true}, {"order", "Optional build order in your own words, e.g. \"bottom cap, ring, carrier, sun, planets, cover, top cap\"", false}},
+		func(in map[string]string) (string, string) {
+			return "Add an assembly timeline to " + in["project"], AssemblyPrompt(in["project"], in["order"])
+		})
+	addPrompt(s, "review_model", "Review a model",
+		"Audit an existing project against the house format and quality bar, and report problems with fixes.",
+		[]promptArg{project}, func(in map[string]string) (string, string) {
+			return "Review " + in["project"], ReviewPrompt(in["project"])
+		})
+	addPrompt(s, "tune_fit", "Tune a fit",
+		"Adjust a model's clearances after a test print (too tight, too loose, snaps, gears), and compile the coupon to test it.",
+		[]promptArg{project, {"problem", "What happened, e.g. \"the lid is too tight\"", false}}, func(in map[string]string) (string, string) {
+			return "Tune a fit in " + in["project"], TuneFitPrompt(in["project"], in["problem"])
+		})
+	addPrompt(s, "print_model", "Print a model",
+		"Print a part, plate or coupon: pick the printable option, check it fits, estimate, request approval, then start the job once the user approves.",
+		[]promptArg{project, {"part", "Optional part, plate or coupon option to print", false}}, func(in map[string]string) (string, string) {
+			return "Print " + in["project"], PrintPrompt(in["project"], in["part"])
+		})
 }
 
 type AssemblyIn struct {

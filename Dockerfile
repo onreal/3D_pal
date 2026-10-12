@@ -78,7 +78,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -tags integration -v ./internal/scad/... ./internal/slicers/... ./internal/printers/bambu/... ./internal/assembly/...
+RUN xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -tags integration -v ./internal/scad/... ./internal/slicers/... ./internal/printers/bambu/... ./internal/assembly/... ./skills/...
 
 # The default image is the runtime.
 FROM runtime

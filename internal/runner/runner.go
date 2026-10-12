@@ -31,6 +31,26 @@ func (Exec) Run(ctx context.Context, name string, args ...string) ([]byte, error
 	return stdout.Bytes(), nil
 }
 
+// Logger is a Runner that can also return what a tool wrote to stderr when it succeeds.
+// OpenSCAD writes its echo() lines and warnings there.
+type Logger interface {
+	RunLog(ctx context.Context, name string, args ...string) (stdout, stderr []byte, err error)
+}
+
+func (Exec) RunLog(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		msg := stderr.String()
+		if len(msg) > 2000 {
+			msg = msg[len(msg)-2000:]
+		}
+		return nil, nil, fmt.Errorf("%s failed: %w\n%s", filepath.Base(name), err, msg)
+	}
+	return stdout.Bytes(), stderr.Bytes(), nil
+}
+
 // Fake records calls; tests script results with OnRun. It is safe for concurrent use.
 type Fake struct {
 	mu    sync.Mutex

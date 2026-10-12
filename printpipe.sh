@@ -15,6 +15,9 @@
 #   ./printpipe.sh mcp-add [scope]  register with Claude Code over HTTP; print the Claude Desktop config
 #   ./printpipe.sh mcp-remove       unregister from Claude Code
 #   ./printpipe.sh mcp              for stdio-only clients: starts the server if needed and bridges stdio to /mcp
+#   ./printpipe.sh skills [DIR]     install the printpipe-cad agent skill for Claude Code (~/.claude, or DIR/.claude)
+#   ./printpipe.sh skills-zip [OUT] package the skill as a zip for claude.ai or Claude Desktop
+#   ./printpipe.sh skills-remove [DIR]  uninstall the skill
 #
 # Settings come from the environment (defaults in brackets):
 #   PRINTPIPE_IMAGE  [print-pipeline:latest]   PRINTPIPE_PORT  [8080]
@@ -239,6 +242,57 @@ cmd_mcp_remove() {
   claude mcp remove print-pipeline -s "${1:-user}"
 }
 
+# The printpipe-cad skill is linked, not copied, so `git pull` updates it. The MCP server
+# serves the same files as resources and prompts.
+SKILL_NAME=printpipe-cad
+SKILL_SRC="$HERE/skills/$SKILL_NAME"
+
+skills_dir() {
+  if [[ -n "${1:-}" ]]; then
+    [[ -d "$1" ]] || die "no such directory: $1"
+    printf '%s\n' "$(cd "$1" && pwd)/.claude/skills"
+  else
+    printf '%s\n' "$HOME/.claude/skills"
+  fi
+}
+
+cmd_skills() {
+  [[ -f "$SKILL_SRC/SKILL.md" ]] || die "skill not found at $SKILL_SRC"
+  local dir dest; dir=$(skills_dir "${1:-}"); dest="$dir/$SKILL_NAME"
+  mkdir -p "$dir"
+  if [[ -L "$dest" ]]; then
+    [[ "$(readlink "$dest")" == "$SKILL_SRC" ]] || die "$dest already links to $(readlink "$dest"); remove it first"
+  elif [[ -e "$dest" ]]; then
+    die "$dest already exists and is not a link to this repository; move it away first"
+  else
+    ln -s "$SKILL_SRC" "$dest"
+  fi
+  say "Installed the $SKILL_NAME skill: $dest -> $SKILL_SRC"
+  say "Claude Code loads it in new sessions; agents use it whenever they design or print with the pipeline."
+}
+
+cmd_skills_zip() {
+  [[ -f "$SKILL_SRC/SKILL.md" ]] || die "skill not found at $SKILL_SRC"
+  command -v zip >/dev/null 2>&1 || die "zip is not installed"
+  local out="${1:-$PWD/$SKILL_NAME.zip}"
+  [[ "$out" == /* ]] || out="$PWD/$out"
+  [[ -e "$out" ]] && die "$out already exists"
+  (cd "$HERE/skills" && zip -qr "$out" "$SKILL_NAME" -x '*.DS_Store')
+  say "Wrote $out: upload it in claude.ai or Claude Desktop under Settings > Capabilities > Skills."
+}
+
+cmd_skills_remove() {
+  local dest; dest="$(skills_dir "${1:-}")/$SKILL_NAME"
+  if [[ -L "$dest" && "$(readlink "$dest")" == "$SKILL_SRC" ]]; then
+    rm "$dest"
+    say "Removed $dest"
+  elif [[ -e "$dest" || -L "$dest" ]]; then
+    die "$dest was not installed by this script; leaving it"
+  else
+    say "Not installed: $dest"
+  fi
+}
+
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$SELF" >&2; }
 
 case "${1:-}" in
@@ -252,6 +306,9 @@ case "${1:-}" in
   mcp) shift; cmd_mcp "$@" ;;
   mcp-add) shift; cmd_mcp_add "$@" ;;
   mcp-remove) shift; cmd_mcp_remove "$@" ;;
+  skills) shift; cmd_skills "$@" ;;
+  skills-zip) shift; cmd_skills_zip "$@" ;;
+  skills-remove) shift; cmd_skills_remove "$@" ;;
   -h|--help|help|"") usage ;;
   *) usage; exit 2 ;;
 esac

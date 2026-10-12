@@ -28,10 +28,15 @@ Write models with named top-level parameters in OpenSCAD Customizer style, for e
 "wall = 2; // [1:0.5:5] Wall thickness in mm", and change dimensions by passing params to
 compile_model with empty scad_code instead of rewriting the file.
 
-For a model with several parts, add an assembly timeline: the viewer's Assembly tab then
-plays the parts into place in build order. Read the resource printpipe://guides/assembly
-(or use the add_assembly_timeline prompt) for the convention, then check the result with
-get_assembly. printpipe://guides/modeling has the parameter and printability rules.`
+Every model follows the printpipe-cad house format. Read printpipe://skill first: it gives
+the workflow, the file layout, the definition of done and which guide to read
+(printpipe://guides/modeling, multi-part, assembly, fits, printability, validation, tools,
+troubleshooting), and links two complete templates (printpipe://templates/single-part,
+printpipe://templates/multi-part). The prompts design_part, design_assembly,
+add_assembly_timeline, review_model, tune_fit and print_model give step-by-step tasks.
+compile_model reports the model's echo() lines and OpenSCAD warnings: fix every warning.
+For a model with several parts, declare an assembly timeline and check it with
+get_assembly.`
 
 type CompileIn struct {
 	Project  string         `json:"project" jsonschema:"folder name: letters, digits, - and _"`

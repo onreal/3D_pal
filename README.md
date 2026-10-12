@@ -54,6 +54,9 @@ simulated printer and slicer.
 | `./printpipe.sh mcp-add [scope]` | Starts the server if needed, registers it with Claude Code over HTTP (scope `user` by default, or `project`, `local`), and prints the Claude Desktop config. |
 | `./printpipe.sh mcp-remove [scope]` | Unregisters it from Claude Code. |
 | `./printpipe.sh mcp` | For stdio-only MCP clients: starts the server if needed and relays stdio to `/mcp` through `printpipe bridge` inside the container. The bridge stops when the client goes away, even if the client kills the process. |
+| `./printpipe.sh skills [DIR]` | Installs the `printpipe-cad` agent skill for Claude Code: a link from `~/.claude/skills` (or `DIR/.claude/skills`) to `skills/printpipe-cad`, so `git pull` updates it. |
+| `./printpipe.sh skills-zip [OUT]` | Packages the skill as `printpipe-cad.zip` for claude.ai or Claude Desktop (Settings > Capabilities > Skills). |
+| `./printpipe.sh skills-remove [DIR]` | Removes the link `skills` made. |
 
 Settings come from environment variables:
 
@@ -179,21 +182,59 @@ model has a `part` parameter with an `assembled` option, that option is used. A 
 without the declaration still works: its assembled render is split into separate pieces,
 bottom to top, though parts that touch show as one. Results are cached per version.
 
-## Agent skills (MCP prompts and guides)
+## Agent skills: the printpipe-cad bundle
 
-The server teaches agents its conventions through MCP:
+Every model made through the pipeline follows one house format, so any agent or person
+can open any project and find the same structure: a header with the parts list, assembly
+order, print settings and tuning table; Customizer parameters in fixed groups, with
+clearances per side in `[Fit]`; `assert` and `echo("INFO: …")` checks; one module per
+part in print orientation on z = 0; and a `part` dispatcher with `assembled`, `exploded`,
+`plate`, `coupon_*` and `check_*` options.
 
-| Kind | Name | What it does |
+The rules live in one place, [`skills/printpipe-cad`](skills/printpipe-cad), in the Agent
+Skills format, and reach agents three ways:
+
+- **Claude Code skill**: `./printpipe.sh skills` links it into `~/.claude/skills`. Claude
+  loads it whenever a task is about designing or printing with the pipeline.
+- **claude.ai / Claude Desktop skill**: `./printpipe.sh skills-zip`, then upload the zip.
+- **MCP**: the server embeds the same files (package `skills`) and serves them to any
+  client as resources and prompts. Its instructions tell agents to read `printpipe://skill`
+  first.
+
+| File | MCP resource | Covers |
 | --- | --- | --- |
-| Prompt | `add_assembly_timeline` (`project`, optional `order`) | Step-by-step task: read the model, declare the build order, compile, check with `get_assembly`, report. In Claude Code: `/mcp__print-pipeline__add_assembly_timeline upio-orbit`. |
-| Prompt | `design_part` (`request`, optional `project`) | Design a printable part: Customizer parameters, preview check, estimate, approval. |
-| Resource | `printpipe://guides/assembly` | The assembly convention, rules, example and common mistakes. In Claude Code, `@print-pipeline:printpipe://guides/assembly`. |
-| Resource | `printpipe://guides/modeling` | Parameters, `part` options and printability rules for the A1. |
-| Tool | `get_assembly` | Builds a version's timeline and reports each step (count, colour, position) and what to fix. |
+| `SKILL.md` | `printpipe://skill` | Workflow, house format, definition of done, which guide to read |
+| `references/modeling.md` | `printpipe://guides/modeling` | The file layout, parameter conventions, part modules, dispatcher |
+| `references/multi-part.md` | `printpipe://guides/multi-part` | Splitting into parts, orientation, joints, placements, plates, BOM |
+| `references/assembly.md` | `printpipe://guides/assembly` | The assembly timeline declaration |
+| `references/fits.md` | `printpipe://guides/fits` | Clearances, hardware holes, snap fits, detents, gears, hinges, threads, coupons |
+| `references/printability.md` | `printpipe://guides/printability` | Walls, overhangs, bridges, first layer, strength, holes, text, materials |
+| `references/validation.md` | `printpipe://guides/validation` | Asserts, echo output, previews, interference checks, review checklist |
+| `references/tools.md` | `printpipe://guides/tools` | Every MCP tool, when to use it, mistakes to avoid |
+| `references/troubleshooting.md` | `printpipe://guides/troubleshooting` | Compile errors, slow compiles, wrong previews, print problems → parameters |
+| `templates/single_part.scad` | `printpipe://templates/single-part` | A complete one-part model (wall hook) |
+| `templates/multi_part.scad` | `printpipe://templates/multi-part` | A complete multi-part model (snap box): assembly, plate, coupon, interference check |
 
-The server's instructions, the `compile_model` description and its summary point agents
-to these, so an agent working on a multi-part model is told to add a timeline and how to
-check it.
+| Prompt | Arguments | Task |
+| --- | --- | --- |
+| `design_part` | `request`, `project` | A single part in the house format, checked and estimated |
+| `design_assembly` | `request`, `project` | A multi-part object: interfaces, assembly timeline, interference check, coupons, plate |
+| `add_assembly_timeline` | `project`, `order` | Declare the build order for the viewer's Assembly tab |
+| `review_model` | `project` | Audit a project against the checklist; report problems with fixes |
+| `tune_fit` | `project`, `problem` | Adjust clearances after a test print and recompile the coupon |
+| `print_model` | `project`, `part` | Pick a printable option, estimate, request approval, print |
+
+In Claude Code the prompts are slash commands, e.g. `/mcp__print-pipeline__review_model
+upio-orbit`, and resources can be attached with `@print-pipeline:printpipe://guides/fits`.
+
+`compile_model` also reports each model's `echo()` lines and OpenSCAD warnings under
+"Model output", so the checks a model prints reach the agent. The `get_assembly` tool
+builds and reviews a version's timeline.
+
+Tests keep the bundle honest: every file is served, every relative link resolves, the
+front matter is valid, the templates follow the format, and (in the integration stage)
+every template option compiles with the real OpenSCAD with no warnings, sits flat on the
+bed, passes its interference check, and fails it with a negative clearance.
 
 ## What the agent gets
 
@@ -226,7 +267,8 @@ internal/printers/      bambu (FTPS + MQTT) and fake drivers
 internal/estimates/     estimate cache with shared runs
 internal/jobs/          approvals bound to the file's SHA-256
 internal/pipeline/      the service behind every tool and endpoint
-internal/mcpserver/     MCP tools and session tracking
+internal/mcpserver/     MCP tools, resources, prompts and session tracking
+skills/printpipe-cad/   the agent skill: SKILL.md, references/, templates/ (embedded by package skills)
 internal/sessions/      open agent sessions: client, transport, activity
 internal/bridge/        stdio-to-/mcp relay for stdio-only clients
 internal/web/           HTTP API, SSE, localhost and origin checks, the embedded viewer

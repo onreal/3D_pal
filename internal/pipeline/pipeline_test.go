@@ -289,9 +289,9 @@ func TestPrintersTestAndListings(t *testing.T) {
 
 func TestSummaryMentionsEstimateAndWarnings(t *testing.T) {
 	r := pipeline.CompileResult{Project: "box", Version: 2, Params: map[string]any{"label": "A1", "wall": 2.0},
-		Warnings: []string{"the top preview was not written"}, ViewerURL: "http://localhost:8080"}
+		Warnings: []string{"the top preview was not written"}, Messages: []string{"wall check ok"}, ViewerURL: "http://localhost:8080"}
 	s := r.Summary()
-	for _, want := range []string{`label="A1"`, "wall=2", "Warning: the top preview", "localhost:8080"} {
+	for _, want := range []string{`label="A1"`, "wall=2", "Warning: the top preview", "Model output (echo and OpenSCAD warnings):\n  wall check ok", "localhost:8080"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("summary missing %q: %s", want, s)
 		}

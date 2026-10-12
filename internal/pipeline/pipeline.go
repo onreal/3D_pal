@@ -242,6 +242,7 @@ type CompileResult struct {
 	Params       map[string]any      `json:"params"`
 	Images       []Image             `json:"-"`
 	Warnings     []string            `json:"warnings,omitempty"`
+	Messages     []string            `json:"messages,omitempty"`
 	Assembly     int                 `json:"assembly_steps,omitempty"`
 	AssemblyHint bool                `json:"-"`
 	Estimate     *estimates.Estimate `json:"estimate,omitempty"`
@@ -282,6 +283,12 @@ func (r CompileResult) Summary() string {
 	}
 	for _, w := range r.Warnings {
 		fmt.Fprintf(&b, "\nWarning: %s", w)
+	}
+	if len(r.Messages) > 0 {
+		b.WriteString("\nModel output (echo and OpenSCAD warnings):")
+		for _, m := range r.Messages {
+			fmt.Fprintf(&b, "\n  %s", m)
+		}
 	}
 	if len(r.Images) > 0 {
 		angles := make([]string, len(r.Images))
@@ -355,7 +362,7 @@ func (s *Service) compile(ctx context.Context, proj, code string, params map[str
 	if err := os.WriteFile(v.Path(project.SCAD), []byte(code), 0o644); err != nil {
 		return CompileResult{}, err
 	}
-	m, err := s.d.SCAD.Compile(ctx, v.Path(project.SCAD), v.Path(project.STL), defines)
+	m, msgs, err := s.d.SCAD.CompileLog(ctx, v.Path(project.SCAD), v.Path(project.STL), defines)
 	if err != nil {
 		return CompileResult{}, err
 	}
@@ -365,7 +372,7 @@ func (s *Service) compile(ctx context.Context, proj, code string, params map[str
 	}
 	v.Params = scad.Values(decl, params)
 
-	res := CompileResult{Project: proj, Size: m.Size(), Params: v.Params, ViewerURL: s.d.ViewerURL}
+	res := CompileResult{Project: proj, Size: m.Size(), Params: v.Params, Messages: msgs, ViewerURL: s.d.ViewerURL}
 	if steps, err := scad.ParseAssembly(code); err != nil {
 		res.Warnings = append(res.Warnings, "assembly steps: "+err.Error())
 	} else {
