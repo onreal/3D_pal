@@ -84,7 +84,8 @@ func TestRealBambuStudioOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Layers != 100 || res.LayerHeight != 0.1 {
-		t.Fatalf("layers %d at %g mm, want 100 at 0.1", res.Layers, res.LayerHeight)
+	// The first layer stays at the profile's 0.2 mm: 1 + (10 - 0.2) / 0.1 = 99 layers.
+	if res.Layers != 99 || res.LayerHeight != 0.1 {
+		t.Fatalf("layers %d at %g mm, want 99 at 0.1", res.Layers, res.LayerHeight)
 	}
 }

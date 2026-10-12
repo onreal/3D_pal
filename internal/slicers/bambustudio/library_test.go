@@ -21,7 +21,7 @@ func library(t *testing.T) string {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "filament", "fdm_filament_common.json"), `{"name":"fdm_filament_common","filament_density":["1"],"nozzle_temperature":["200"],"filament_diameter":["1.75"]}`)
 	write(t, filepath.Join(root, "filament", "base", "pla.json"), `{"name":"fdm_filament_pla","inherits":"fdm_filament_common","filament_density":["1.26"],"filament_type":["PLA"]}`)
-	write(t, filepath.Join(root, "filament", "Bambu PLA Basic @BBL A1.json"), `{"name":"Bambu PLA Basic @BBL A1","inherits":"fdm_filament_pla","from":"system","nozzle_temperature":["220"]}`)
+	write(t, filepath.Join(root, "filament", "Bambu PLA Basic @BBL A1.json"), `{"name":"Bambu PLA Basic @BBL A1","inherits":"fdm_filament_pla","from":"system","instantiation":"true","nozzle_temperature":["220"]}`)
 	write(t, filepath.Join(root, "filament", "loop.json"), `{"name":"loop","inherits":"loop"}`)
 	return root
 }
@@ -34,7 +34,8 @@ func TestFlattenMergesTheChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"name": "My PLA", "from": "User"}
+	// Named after the system preset it derives from, so Bambu Studio's compatibility check passes.
+	want := map[string]string{"name": "Bambu PLA Basic @BBL A1", "from": "system"}
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("%s = %v, want %v", k, got[k], v)

@@ -126,6 +126,26 @@ func (l *Library) Flatten(kind, path string) (map[string]any, error) {
 		}
 	}
 	delete(out, "inherits")
+	// Bambu Studio checks compatibility by preset name (a process lists the machines it
+	// suits), so the flattened preset takes the name of the nearest system preset it
+	// derives from; a user preset's own name would read as an unknown printer.
 	out["name"] = leaf["name"]
+	for _, p := range chain {
+		if p["from"] == "system" && p["instantiation"] == "true" {
+			// Marked as a system preset too: the CLI applies stricter compatibility rules to
+			// "User" presets and rejects a flattened one ("process not compatible with printer").
+			out["name"], out["from"] = p["name"], "system"
+			break
+		}
+	}
+	// The settings IDs are what the compatibility check compares; keep them in step.
+	for _, id := range []string{"printer_settings_id", "print_settings_id"} {
+		if _, ok := out[id]; ok {
+			out[id] = out["name"]
+		}
+	}
+	if _, ok := out["filament_settings_id"]; ok {
+		out["filament_settings_id"] = []any{out["name"]}
+	}
 	return out, nil
 }

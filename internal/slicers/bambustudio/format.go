@@ -22,9 +22,10 @@ type sliceInfo struct {
 			Value string `xml:"value,attr"`
 		} `xml:"metadata"`
 		Filaments []struct {
-			Type  string `xml:"type,attr"`
-			UsedM string `xml:"used_m,attr"`
-			UsedG string `xml:"used_g,attr"`
+			Type       string `xml:"type,attr"`
+			UsedM      string `xml:"used_m,attr"`
+			UsedG      string `xml:"used_g,attr"`
+			ForSupport string `xml:"used_for_support,attr"`
 		} `xml:"filament"`
 	} `xml:"plate"`
 }
@@ -51,6 +52,13 @@ func ReadResult(path string) (slicer.Result, error) {
 	}
 	plate := info.Plates[0]
 	var weight float64
+	supportKnown := false
+	for _, f := range plate.Filaments {
+		if f.ForSupport != "" {
+			supportKnown = true
+			res.Supports = res.Supports || f.ForSupport == "true"
+		}
+	}
 	for _, m := range plate.Metadata {
 		switch m.Key {
 		case "prediction":
@@ -58,7 +66,10 @@ func ReadResult(path string) (slicer.Result, error) {
 		case "weight":
 			weight, _ = strconv.ParseFloat(m.Value, 64)
 		case "support_used":
-			res.Supports = m.Value == "true"
+			// Only "supports enabled"; the filament's used_for_support says whether any were printed.
+			if !supportKnown {
+				res.Supports = m.Value == "true"
+			}
 		case "outside":
 			res.OffPlate = m.Value == "true"
 		}

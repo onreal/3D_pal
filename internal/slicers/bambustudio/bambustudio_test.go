@@ -50,7 +50,7 @@ func TestEstimatesFromSlicedFile(t *testing.T) {
 			`<metadata key="index" value="1"/><metadata key="prediction" value="1260"/>` +
 			`<metadata key="weight" value="7.42"/><metadata key="support_used" value="true"/>` +
 			`<metadata key="outside" value="false"/>` +
-			`<filament id="1" type="PLA" color="#FFFFFF" used_m="2.48" used_g="7.42"/></plate></config>`,
+			`<filament id="1" type="PLA" color="#FFFFFF" used_m="2.48" used_g="7.42" used_for_support="true"/></plate></config>`,
 		"Metadata/plate_1.gcode":           "; HEADER_BLOCK_START\n; BambuStudio 02.00\n; total layer number: 100\n; HEADER_BLOCK_END\nG28\n",
 		"Metadata/project_settings.config": `{"layer_height": "0.2"}`,
 	})
@@ -136,5 +136,16 @@ func TestSliceReportsCLIError(t *testing.T) {
 	_, err := bambustudio.New(f, "bs").Slice(context.Background(), slicer.Input{Model: "m.stl", OutPath: out, Profiles: profiles(t)})
 	if err == nil || !strings.Contains(err.Error(), "too close") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSupportsMeansSupportWasPrinted(t *testing.T) {
+	path := zipWith(t, map[string]string{
+		"Metadata/slice_info.config": `<config><plate><metadata key="prediction" value="747"/><metadata key="support_used" value="true"/>` +
+			`<filament id="1" type="PLA" used_m="1.23" used_g="3.72" used_for_support="false"/></plate></config>`,
+	})
+	res, err := bambustudio.ReadResult(path)
+	if err != nil || res.Supports {
+		t.Fatalf("a cube with supports enabled printed none: %+v %v", res, err)
 	}
 }
