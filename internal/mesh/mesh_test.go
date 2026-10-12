@@ -14,7 +14,7 @@ func TestASCIICube(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := m.Size(); s != (mesh.Vec{20, 10, 5}) {
+	if s := m.Size(); s != (mesh.Vec{X: 20, Y: 10, Z: 5}) {
 		t.Fatalf("size %+v", s)
 	}
 	if v := m.Volume(); math.Abs(v-1000) > 1e-6 {
@@ -39,7 +39,7 @@ func TestBinarySTL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := m.Size(); s != (mesh.Vec{3, 4, 2}) {
+	if s := m.Size(); s != (mesh.Vec{X: 3, Y: 4, Z: 2}) {
 		t.Fatalf("size %+v", s)
 	}
 }
