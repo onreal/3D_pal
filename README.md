@@ -26,6 +26,17 @@ microSD card inserted.
 No printer yet? Add `-e PRINTPIPE_DEMO=1` to the `docker run` arguments: a simulated
 printer and slicer are configured when none exists.
 
+To open the viewer and settings without an agent (for example to set up the printer
+first), run the container on its own; without `-i` there is no agent on stdin, so it
+serves only the web page:
+
+```sh
+docker run -d --rm --name print-pipeline --platform linux/amd64 \
+  -p 127.0.0.1:8080:8080 -v print-data:/data -v "$HOME/prints:/work" print-pipeline:1.0
+```
+
+Stop it (`docker stop print-pipeline`) before starting an agent session, since both use port 8080.
+
 ## What the agent gets
 
 | Tool | Does |
@@ -78,7 +89,7 @@ The image build runs the Go and Vitest suites; a failing test fails the build.
 ```sh
 cd web && npm ci && npm run build && cd ..
 cp -r web/dist/* internal/web/static/
-go run ./cmd/printpipe -mcp=false -demo -data ./.data -work ./.work
+go run ./cmd/printpipe -demo -data ./.data -work ./.work
 # viewer on http://localhost:8080; npm run dev in web/ proxies /api to it
 ```
 

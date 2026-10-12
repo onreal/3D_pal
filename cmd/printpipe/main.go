@@ -51,13 +51,17 @@ func run() error {
 	work := flag.String("work", envOr("PRINTPIPE_WORK", "/work"), "workspace: one folder per part")
 	addr := flag.String("addr", envOr("PRINTPIPE_ADDR", ":8080"), "HTTP listen address")
 	viewerURL := flag.String("viewer-url", envOr("PRINTPIPE_VIEWER_URL", "http://localhost:8080"), "URL the user opens, for messages to the agent")
-	useMCP := flag.Bool("mcp", true, "serve MCP on stdin/stdout (off: HTTP only, for development)")
+	mcpMode := flag.String("mcp", "auto", "serve MCP on stdin/stdout: true, false (HTTP only), or auto (only when stdin is a pipe, as with docker run -i)")
 	demo := flag.Bool("demo", os.Getenv("PRINTPIPE_DEMO") == "1", "add a simulated printer and slicer when no printer is configured")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
 		return nil
+	}
+	useMCP, err := mcpEnabled(*mcpMode)
+	if err != nil {
+		return err
 	}
 
 	for _, d := range []string{*data, filepath.Join(*data, "logs"), filepath.Join(*data, "profiles"), *work} {
@@ -72,7 +76,7 @@ func run() error {
 	}
 	defer logFile.Close()
 	var logOut io.Writer = logFile
-	if !*useMCP {
+	if !useMCP {
 		logOut = io.MultiWriter(logFile, os.Stderr)
 	}
 	level := new(slog.LevelVar)
@@ -135,13 +139,14 @@ func run() error {
 		}
 	}()
 
-	if *useMCP {
+	if useMCP {
 		logger.Info("mcp serving on stdio")
 		err = mcpserver.New(svc, version).Run(ctx, &mcp.StdioTransport{})
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
 			logger.Error("mcp stopped", "err", err)
 		}
 	} else {
+		logger.Info("no agent attached: serving the viewer only; MCP clients start the container with docker run -i", "url", *viewerURL)
 		select {
 		case <-ctx.Done():
 		case err = <-httpErr:
@@ -153,6 +158,24 @@ func run() error {
 	srv.Shutdown(shutdown)
 	logger.Info("stopped")
 	return nil
+}
+
+// mcpEnabled decides whether to serve MCP. "auto" serves it only when stdin is a pipe:
+// an MCP client runs docker run -i; a plain docker run has no stdin and would exit at once.
+func mcpEnabled(mode string) (bool, error) {
+	switch mode {
+	case "true", "on", "1":
+		return true, nil
+	case "false", "off", "0":
+		return false, nil
+	case "auto", "":
+		st, err := os.Stdin.Stat()
+		if err != nil {
+			return false, nil
+		}
+		return st.Mode()&os.ModeNamedPipe != 0 || st.Mode()&os.ModeSocket != 0, nil
+	}
+	return false, fmt.Errorf("-mcp must be true, false or auto, got %q", mode)
 }
 
 func setLevel(v *slog.LevelVar, name string) {
