@@ -18,13 +18,19 @@ import (
 
 // PahoMQTT connects per call: the printer allows few concurrent clients, and tool
 // calls are rare, so a short-lived connection is simpler than keeping one open.
-type PahoMQTT struct{}
+type PahoMQTT struct {
+	Port int // 8883 when zero
+}
 
-func (PahoMQTT) connect(ctx context.Context, c Config) (paho.Client, error) {
+func (m PahoMQTT) connect(ctx context.Context, c Config) (paho.Client, error) {
+	port := m.Port
+	if port == 0 {
+		port = 8883
+	}
 	id := make([]byte, 6)
 	rand.Read(id)
 	opts := paho.NewClientOptions().
-		AddBroker(fmt.Sprintf("tls://%s:8883", c.IP)).
+		AddBroker(fmt.Sprintf("tls://%s:%d", c.IP, port)).
 		SetClientID("printpipe-" + hex.EncodeToString(id)).
 		SetUsername("bblp").
 		SetPassword(c.AccessCode).
