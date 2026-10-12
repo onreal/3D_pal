@@ -84,6 +84,10 @@ func New(d Deps) *Service {
 		}
 	}
 	s := &Service{d: d, watching: map[string]context.CancelFunc{}}
+	// Calls cut off by a restart never finished; say so instead of leaving them running.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	d.DB.Exec(`UPDATE runs SET exit_code = 1, message = 'interrupted: the server restarted during this call',
+		finished_at = ?, updated_at = ? WHERE finished_at IS NULL`, now, now)
 	s.est = estimates.New(d.DB, func(e estimates.Estimate) { d.Events.Publish(events.Estimate, e) })
 	return s
 }

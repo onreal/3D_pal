@@ -341,3 +341,14 @@ func TestDefaultPrinterBuiltFromRegistry(t *testing.T) {
 		t.Fatalf("%+v %v", ps, err)
 	}
 }
+
+func TestRunsCutOffByARestartAreMarked(t *testing.T) {
+	db := storeOf(t)
+	db.Exec(`INSERT INTO runs (project, tool, started_at) VALUES ('cube', 'compile_model', '2026-10-12T10:00:00Z')`)
+	e := newEnv(t)
+	svc := pipeline.New(pipeline.Deps{DB: db, Config: e.Config, Events: e.Events, Projects: project.NewStore(db, t.TempDir())})
+	runs, _ := svc.Runs(pipeline.RunFilter{Project: "cube"}, 5)
+	if len(runs) != 1 || runs[0].ExitCode == nil || *runs[0].ExitCode != 1 || !strings.Contains(runs[0].Message, "interrupted") {
+		t.Fatalf("%+v", runs)
+	}
+}
