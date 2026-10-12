@@ -12,6 +12,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
+      - name: printpipe.sh parses
+        run: bash -n printpipe.sh
       - run: go test -race ./...
       - name: Coverage gate (core packages ≥ 80%)
         run: ./scripts/coverage.sh 80

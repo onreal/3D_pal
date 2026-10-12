@@ -76,7 +76,8 @@ func run() error {
 	}
 	defer logFile.Close()
 	var logOut io.Writer = logFile
-	if !useMCP {
+	// Echo to a terminal during development; in the container stderr already goes to this file.
+	if st, err := os.Stderr.Stat(); err == nil && st.Mode()&os.ModeCharDevice != 0 && !useMCP {
 		logOut = io.MultiWriter(logFile, os.Stderr)
 	}
 	level := new(slog.LevelVar)
