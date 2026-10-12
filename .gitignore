@@ -1,0 +1,10 @@
+/printpipe
+/web/node_modules/
+/web/dist/
+/web/test-results/
+/web/playwright-report/
+/internal/web/static/*
+!/internal/web/static/.keep
+*.db
+*.db-*
+.DS_Store
