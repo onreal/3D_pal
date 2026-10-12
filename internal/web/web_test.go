@@ -217,8 +217,12 @@ func TestModelAndParamsFlow(t *testing.T) {
 	resp, body = f.do(t, "GET", "/api/projects/cube/versions", nil, nil)
 	var vs []map[string]any
 	json.Unmarshal(body, &vs)
-	if resp.StatusCode != 200 || len(vs) != 2 {
+	if resp.StatusCode != 200 || len(vs) != 2 || vs[1]["size_mm"] == nil {
 		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	resp, body = f.do(t, "POST", "/api/projects/cube/versions/1/restore", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"version":3`) {
+		t.Fatalf("restore: %d %s", resp.StatusCode, body)
 	}
 	resp, body = f.do(t, "GET", "/api/projects/cube/model.stl?v=1", nil, nil)
 	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Content-Disposition"), "cube_v1.stl") {

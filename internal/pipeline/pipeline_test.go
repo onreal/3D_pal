@@ -246,3 +246,16 @@ func TestBadProjectName(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestRestoreMakesAnOldVersionCurrent(t *testing.T) {
+	e := newEnv(t)
+	e.Svc.Compile(ctx, "cube", cube, nil)
+	e.Svc.Compile(ctx, "cube", "", map[string]any{"size": 40.0})
+	r, err := e.Svc.Restore(ctx, "cube", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Version != 3 || r.Size.X != 20 {
+		t.Fatalf("%+v", r)
+	}
+}

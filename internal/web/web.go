@@ -63,6 +63,7 @@ func Handler(svc *pipeline.Service, cfg *config.Store, hub *events.Hub, assets f
 	mux.HandleFunc("POST /api/projects/{name}/versions/{v}/estimate", s.startEstimate)
 	mux.HandleFunc("GET /api/projects/{name}/versions/{v}/estimate", s.getEstimate)
 	mux.HandleFunc("GET /api/projects/{name}/versions/{v}/job.gcode.3mf", s.versionSlice)
+	mux.HandleFunc("POST /api/projects/{name}/versions/{v}/restore", s.restore)
 
 	mux.HandleFunc("GET /api/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /api/jobs/{id}/approve", s.approve)
@@ -360,6 +361,23 @@ func (s *Server) postParams(w http.ResponseWriter, r *http.Request) {
 	res, err := s.svc.Compile(r.Context(), name, "", body.Params)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
+func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
+	name, ok := projectName(w, r)
+	if !ok {
+		return
+	}
+	n, ok := versionParam(w, r)
+	if !ok {
+		return
+	}
+	res, err := s.svc.Restore(r.Context(), name, n)
+	if err != nil {
+		writeErr(w, status(err), err)
 		return
 	}
 	writeJSON(w, 200, res)

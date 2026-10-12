@@ -673,6 +673,31 @@ func (s *Service) Versions(proj string) ([]VersionInfo, error) {
 	return out, nil
 }
 
+// Restore makes an old version current again by compiling its code and parameters as a new version (PRD V-12).
+func (s *Service) Restore(ctx context.Context, proj string, n int) (CompileResult, error) {
+	v, err := s.d.Projects.Get(proj, n)
+	if err != nil {
+		return CompileResult{}, err
+	}
+	code, err := os.ReadFile(v.Path(project.SCAD))
+	if err != nil {
+		return CompileResult{}, err
+	}
+	params := map[string]any{}
+	for _, p := range scad.ParseParams(string(code)) {
+		if val, ok := v.Params[p.Name]; ok && fmt.Sprint(val) != fmt.Sprint(p.Value) {
+			params[p.Name] = val
+		}
+	}
+	var res CompileResult
+	err = s.record(proj, "restore_version", map[string]any{"version": v.Number}, func() error {
+		var err error
+		res, err = s.compile(ctx, proj, string(code), params)
+		return err
+	})
+	return res, err
+}
+
 // Version returns one version (0 = latest).
 func (s *Service) Version(proj string, n int) (project.Version, error) {
 	return s.d.Projects.Get(proj, n)
