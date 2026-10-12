@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/margarit/printpipe/internal/runner"
 	"github.com/margarit/printpipe/internal/slicer"
@@ -26,15 +25,24 @@ func init() {
 type Slicer struct {
 	run    runner.Runner
 	binary string
+	lib    *Library
 }
 
 // New returns the slicer; binary is the Bambu Studio executable ($BAMBU_STUDIO in the image).
+// Its system presets are read from $BAMBU_PROFILES, or resources/profiles/BBL next to it.
 func New(r runner.Runner, binary string) *Slicer {
 	if binary == "" {
 		binary = "bambu-studio"
 	}
-	return &Slicer{run: r, binary: binary}
+	root := os.Getenv("BAMBU_PROFILES")
+	if root == "" {
+		root = filepath.Join(filepath.Dir(binary), "resources", "profiles", "BBL")
+	}
+	return &Slicer{run: r, binary: binary, lib: NewLibrary(root)}
 }
+
+// WithLibrary replaces the system preset library (tests).
+func (s *Slicer) WithLibrary(l *Library) *Slicer { s.lib = l; return s }
 
 func (s *Slicer) Kind() string { return Kind }
 
@@ -67,12 +75,25 @@ func (s *Slicer) Slice(ctx context.Context, in slicer.Input) (slicer.Result, err
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return slicer.Result{}, err
 	}
-	process, err := WriteProcess(in.Profiles[slicer.ProfileProcess], filepath.Join(dir, "process.json"), in.Overrides)
-	if err != nil {
-		return slicer.Result{}, err
+	// The CLI gets self-contained presets: the inherits chain flattened, the job's overrides applied.
+	flat := map[string]string{}
+	for _, k := range []string{slicer.ProfileMachine, slicer.ProfileProcess, slicer.ProfileFilament} {
+		m, err := s.lib.Flatten(k, in.Profiles[k])
+		if err != nil {
+			return slicer.Result{}, err
+		}
+		if k == slicer.ProfileProcess {
+			ApplyOverrides(m, in.Overrides)
+		}
+		flat[k] = filepath.Join(dir, k+".json")
+		b, _ := json.MarshalIndent(m, "", "    ")
+		if err := os.WriteFile(flat[k], b, 0o644); err != nil {
+			return slicer.Result{}, err
+		}
 	}
 	os.Remove(in.OutPath)
-	args := Args(in.Profiles[slicer.ProfileMachine], process, in.Profiles[slicer.ProfileFilament], in.Model, in.OutPath)
+	os.Remove(filepath.Join(dir, "result.json"))
+	args := Args(flat[slicer.ProfileMachine], flat[slicer.ProfileProcess], flat[slicer.ProfileFilament], in.Model, in.OutPath)
 	if _, err := s.run.Run(ctx, s.binary, args...); err != nil {
 		if msg := resultMessage(dir); msg != "" {
 			return slicer.Result{}, fmt.Errorf("Bambu Studio could not slice: %s", msg)
@@ -111,20 +132,8 @@ func resultMessage(dir string) string {
 	return fmt.Sprintf("%s (code %d)", r.ErrorString, r.ReturnCode)
 }
 
-// WriteProcess copies the process profile to dst with the job's overrides applied and
-// returns dst. Without overrides it returns src unchanged.
-func WriteProcess(src, dst string, o slicer.Overrides) (string, error) {
-	if o.Supports == nil && o.SupportType == "" && o.LayerHeight == 0 && o.Infill == nil {
-		return src, nil
-	}
-	raw, err := os.ReadFile(src)
-	if err != nil {
-		return "", err
-	}
-	var p map[string]any
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", fmt.Errorf("process profile is not JSON: %w", err)
-	}
+// ApplyOverrides changes a process preset for one job; zero overrides leave it unchanged.
+func ApplyOverrides(p map[string]any, o slicer.Overrides) {
 	if o.Supports != nil {
 		p["enable_support"] = boolStr(*o.Supports)
 	}
@@ -137,11 +146,6 @@ func WriteProcess(src, dst string, o slicer.Overrides) (string, error) {
 	if o.Infill != nil {
 		p["sparse_infill_density"] = strconv.Itoa(*o.Infill) + "%"
 	}
-	if name, ok := p["name"].(string); ok && !strings.HasSuffix(name, " (job)") {
-		p["name"] = name + " (job)"
-	}
-	out, _ := json.MarshalIndent(p, "", "    ")
-	return dst, os.WriteFile(dst, out, 0o644)
 }
 
 func boolStr(b bool) string {

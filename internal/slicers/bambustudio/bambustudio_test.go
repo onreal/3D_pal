@@ -83,26 +83,39 @@ func profiles(t *testing.T) map[string]string {
 	return m
 }
 
-func TestOverridesWriteAJobProcessFile(t *testing.T) {
+func TestOverridesChangeTheProcessPreset(t *testing.T) {
 	on, infill := true, 25
-	dst := filepath.Join(t.TempDir(), "process.json")
-	got, err := bambustudio.WriteProcess(profiles(t)[slicer.ProfileProcess], dst,
-		slicer.Overrides{Supports: &on, SupportType: "tree(auto)", LayerHeight: 0.12, Infill: &infill})
-	if err != nil || got != dst {
-		t.Fatal(got, err)
-	}
-	var p map[string]string
-	b, _ := os.ReadFile(dst)
-	json.Unmarshal(b, &p)
+	p := map[string]any{"enable_support": "0", "layer_height": "0.2"}
+	bambustudio.ApplyOverrides(p, slicer.Overrides{Supports: &on, SupportType: "tree(auto)", LayerHeight: 0.12, Infill: &infill})
 	if p["enable_support"] != "1" || p["support_type"] != "tree(auto)" || p["layer_height"] != "0.12" || p["sparse_infill_density"] != "25%" {
 		t.Fatalf("%v", p)
 	}
+	q := map[string]any{"layer_height": "0.2"}
+	bambustudio.ApplyOverrides(q, slicer.Overrides{})
+	if len(q) != 1 || q["layer_height"] != "0.2" {
+		t.Fatalf("no overrides changed the preset: %v", q)
+	}
 }
 
-func TestNoOverridesUsesProfileAsIs(t *testing.T) {
-	src := profiles(t)[slicer.ProfileProcess]
-	if got, _ := bambustudio.WriteProcess(src, "/nowhere", slicer.Overrides{}); got != src {
-		t.Fatalf("got %s", got)
+func TestSliceGetsFlattenedPresetsWithOverrides(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "job.gcode.3mf")
+	var args []string
+	f := &runner.Fake{OnRun: func(_ string, a []string) ([]byte, error) {
+		args = a
+		return nil, errors.New("stop here")
+	}}
+	off := false
+	bambustudio.New(f, "bs").WithLibrary(bambustudio.NewLibrary("")).
+		Slice(context.Background(), slicer.Input{Model: "m.stl", OutPath: out, Profiles: profiles(t), Overrides: slicer.Overrides{Supports: &off}})
+	dir := filepath.Dir(out)
+	if len(args) < 6 || args[5] != filepath.Join(dir, "machine.json")+";"+filepath.Join(dir, "process.json") || args[7] != filepath.Join(dir, "filament.json") {
+		t.Fatalf("args %q", args)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "process.json"))
+	var p map[string]any
+	json.Unmarshal(b, &p)
+	if p["enable_support"] != "0" || p["name"] != "process" {
+		t.Fatalf("job process preset: %v", p)
 	}
 }
 

@@ -1,0 +1,8 @@
+{
+    "filament_settings_id": ["My PLA Basic"],
+    "from": "User",
+    "inherits": "Bambu PLA Basic @BBL A1",
+    "is_custom_defined": "0",
+    "name": "My PLA Basic",
+    "type": "filament"
+}

@@ -22,7 +22,20 @@ ARG VERSION=dev
 RUN go vet ./... && go test ./... \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/printpipe ./cmd/printpipe
 
-# 3. Runtime
+# 3. Slicer: unpack the pinned Bambu Studio AppImage without running it (no FUSE in Docker,
+# and the AppImage runtime can't execute under emulation). The squashfs payload starts
+# where the ELF section header table ends.
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS slicer
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates squashfs-tools python3 \
+    && rm -rf /var/lib/apt/lists/*
+ARG BAMBU_APPIMAGE_URL=https://github.com/bambulab/BambuStudio/releases/download/v02.08.02.61/BambuStudio_ubuntu24.04-v02.08.02.61-20260820225108.AppImage
+RUN test -n "$BAMBU_APPIMAGE_URL" \
+ && curl -fL --retry 3 "$BAMBU_APPIMAGE_URL" -o /tmp/bs.AppImage \
+ && offset=$(python3 -c 'import struct,sys; b=open(sys.argv[1],"rb").read(64); shoff,=struct.unpack_from("<Q",b,0x28); shentsize,shnum=struct.unpack_from("<HH",b,0x3A); print(shoff+shentsize*shnum)' /tmp/bs.AppImage) \
+ && unsquashfs -q -n -o "$offset" -d /opt/bambu-studio /tmp/bs.AppImage \
+ && rm /tmp/bs.AppImage && test -x /opt/bambu-studio/AppRun
+
+# 4. Runtime
 FROM --platform=linux/amd64 ubuntu:24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -32,14 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libosmesa6 libfuse2t64 locales fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-# Pinned slicer: Bambu Studio's Ubuntu 24.04 AppImage from github.com/bambulab/BambuStudio/releases.
-# The AppImage is extracted, not run, because FUSE is not available inside Docker.
-ARG BAMBU_APPIMAGE_URL=https://github.com/bambulab/BambuStudio/releases/download/v02.08.02.61/BambuStudio_ubuntu24.04-v02.08.02.61-20260820225108.AppImage
-RUN test -n "$BAMBU_APPIMAGE_URL" \
- && curl -fL --retry 3 "$BAMBU_APPIMAGE_URL" -o /tmp/bs.AppImage \
- && chmod +x /tmp/bs.AppImage && cd /opt \
- && /tmp/bs.AppImage --appimage-extract >/dev/null \
- && mv squashfs-root bambu-studio && rm /tmp/bs.AppImage
+COPY --from=slicer /opt/bambu-studio /opt/bambu-studio
 ENV BAMBU_STUDIO=/opt/bambu-studio/AppRun \
     OPENSCAD=openscad \
     PRINTPIPE_DATA=/data \
@@ -52,7 +58,7 @@ EXPOSE 8080
 VOLUME ["/data"]
 ENTRYPOINT ["/usr/bin/tini", "-s", "--", "/entrypoint.sh"]
 
-# 4. Integration tests against the real OpenSCAD and Bambu Studio: docker build --target integration .
+# 5. Integration tests against the real OpenSCAD and Bambu Studio: docker build --target integration .
 FROM --platform=linux/amd64 golang:1.26-bookworm AS gotools
 FROM runtime AS integration
 COPY --from=gotools /usr/local/go /usr/local/go

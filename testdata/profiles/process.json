@@ -1,0 +1,10 @@
+{
+    "enable_support": "1",
+    "from": "User",
+    "inherits": "0.20mm Standard @BBL A1",
+    "is_custom_defined": "0",
+    "name": "0.20mm Standard @BBL A1 - tree supports",
+    "print_settings_id": "0.20mm Standard @BBL A1 - tree supports",
+    "support_type": "tree(auto)",
+    "type": "process"
+}
