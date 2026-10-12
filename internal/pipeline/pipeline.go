@@ -744,8 +744,14 @@ func (s *Service) RequestApproval(ctx context.Context, proj string, version int,
 
 // Approve marks a job printable. Only the web API calls it, after the user clicks Approve.
 func (s *Service) Approve(jobID string) (jobs.Job, error) {
-	var job jobs.Job
-	err := s.record("", "approve", map[string]any{"job_id": jobID}, func() error {
+	job, getErr := s.d.Jobs.Get(jobID)
+	err := s.record(job.Project, "approve", map[string]any{"job_id": jobID, "by": "user"}, func() error {
+		if getErr != nil {
+			return getErr
+		}
+		if job.Printed {
+			return jobs.ErrPrinted
+		}
 		if err := s.d.Jobs.Approve(jobID); err != nil {
 			return err
 		}
@@ -754,7 +760,6 @@ func (s *Service) Approve(jobID string) (jobs.Job, error) {
 		if err != nil {
 			return err
 		}
-		s.d.Projects.Log(job.Project, "approved job "+jobID+" by the user")
 		s.d.Events.Publish(events.Job, map[string]any{"job": job})
 		return nil
 	})
