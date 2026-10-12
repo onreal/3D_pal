@@ -2,7 +2,9 @@
 # Fails when any core package's statement coverage is below the threshold (default 80%).
 set -eu
 threshold=${1:-80}
-out=$(go test -cover ./internal/... 2>&1) || { echo "$out"; exit 1; }
+# Packages with tests; helper packages (storetest, printertest, pipelinetest) are covered through their users.
+pkgs=$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./internal/...)
+out=$(go test -cover $pkgs 2>&1) || { echo "$out"; exit 1; }
 echo "$out"
 echo "$out" | awk -v t="$threshold" '
   $1 == "ok" && /coverage:/ {
