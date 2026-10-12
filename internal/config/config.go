@@ -312,6 +312,8 @@ func (s Settings) clone() Settings {
 type Store struct {
 	db          *sql.DB
 	profilesDir string
+	// OnSave, if set, is called after settings are saved.
+	OnSave func(Settings)
 }
 
 func NewStore(db *sql.DB, profilesDir string) *Store { return &Store{db: db, profilesDir: profilesDir} }
@@ -449,7 +451,13 @@ func (st *Store) Save(s Settings) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if st.OnSave != nil {
+		st.OnSave(s)
+	}
+	return nil
 }
 
 // SaveProfile stores an uploaded profile file and registers it (replacing one of the same name).
