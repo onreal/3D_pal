@@ -76,14 +76,16 @@ func (c *CountingSlicer) Slice(ctx context.Context, in slicer.Input) (slicer.Res
 func (c *CountingSlicer) Calls() int { c.mu.Lock(); defer c.mu.Unlock(); return c.calls }
 
 type Env struct {
-	Svc     *pipeline.Service
-	Printer *fake.Printer
-	Slicer  *CountingSlicer
-	Events  *Recorder
-	Config  *config.Store
-	Jobs    *jobs.Store
-	Work    string
-	Runner  *runner.Fake
+	Svc      *pipeline.Service
+	SCAD     *scad.Compiler
+	Projects *project.Store
+	Printer  *fake.Printer
+	Slicer   *CountingSlicer
+	Events   *Recorder
+	Config   *config.Store
+	Jobs     *jobs.Store
+	Work     string
+	Runner   *runner.Fake
 }
 
 // FakeOpenSCAD writes a cube STL (or a placeholder PNG) for the -o path in args.
@@ -97,6 +99,12 @@ func FakeOpenSCAD(name string, args []string) ([]byte, error) {
 		if a == "-D" && strings.HasPrefix(args[i+1], "size=") {
 			fmt.Sscan(strings.TrimPrefix(args[i+1], "size="), &size)
 		}
+	}
+	if strings.HasSuffix(out, ".3mf") { // assembly: a base and a lid with a gap between
+		return nil, mesh.Write3MF(out, []mesh.Box{
+			{Max: mesh.Vec{X: size, Y: size, Z: 2}, Color: "#FF720C"},
+			{Min: mesh.Vec{Z: size - 2}, Max: mesh.Vec{X: size, Y: size, Z: size}, Color: "#28282B"},
+		})
 	}
 	return nil, os.WriteFile(out, mesh.Cube(size, size, size), 0o644)
 }
@@ -116,13 +124,15 @@ func New(t testing.TB) *Env {
 	sl := &CountingSlicer{}
 	rec := &Recorder{}
 	js := jobs.NewStore(db)
+	projects := project.NewStore(db, work)
+	scadC := scad.New(fr, "openscad")
 	svc := pipeline.New(pipeline.Deps{
-		DB: db, Runner: fr, Config: cfg, Jobs: js, Projects: project.NewStore(db, work),
-		SCAD: scad.New(fr, "openscad"), Slicers: slicer.Set{"fake": sl}, Events: rec,
+		DB: db, Runner: fr, Config: cfg, Jobs: js, Projects: projects,
+		SCAD: scadC, Slicers: slicer.Set{"fake": sl}, Events: rec,
 		NewPrinter: func(config.Printer) (printer.Printer, error) { return p, nil },
 		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		PollEvery:  10 * time.Millisecond,
 	})
 	t.Cleanup(svc.Close)
-	return &Env{Svc: svc, Printer: p, Slicer: sl, Events: rec, Config: cfg, Jobs: js, Work: work, Runner: fr}
+	return &Env{Svc: svc, SCAD: scadC, Projects: projects, Printer: p, Slicer: sl, Events: rec, Config: cfg, Jobs: js, Work: work, Runner: fr}
 }

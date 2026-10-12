@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/margarit/printpipe/internal/assembly"
 	"github.com/margarit/printpipe/internal/bridge"
 	"github.com/margarit/printpipe/internal/config"
 	"github.com/margarit/printpipe/internal/events"
@@ -40,6 +41,7 @@ type Server struct {
 	hub      *events.Hub
 	assets   fs.FS
 	sessions *sessions.Registry
+	assembly *assembly.Service
 }
 
 // Options are the optional parts of the HTTP surface.
@@ -48,6 +50,8 @@ type Options struct {
 	MCP http.Handler
 	// Sessions, if set, backs /api/sessions.
 	Sessions *sessions.Registry
+	// Assembly, if set, backs the assembly timeline endpoints.
+	Assembly *assembly.Service
 }
 
 // BridgeHeader marks requests relayed by printpipe bridge for a stdio client.
@@ -63,7 +67,7 @@ func Handler(svc *pipeline.Service, cfg *config.Store, hub *events.Hub, assets f
 	if reg == nil {
 		reg = sessions.NewRegistry()
 	}
-	s := &Server{svc: svc, cfg: cfg, hub: hub, assets: assets, sessions: reg}
+	s := &Server{svc: svc, cfg: cfg, hub: hub, assets: assets, sessions: reg, assembly: opts.Assembly}
 	mux := http.NewServeMux()
 	if opts.MCP != nil {
 		h := s.trackMCP(opts.MCP)
@@ -71,6 +75,8 @@ func Handler(svc *pipeline.Service, cfg *config.Store, hub *events.Hub, assets f
 			mux.Handle(m+" /mcp", h)
 		}
 	}
+	mux.HandleFunc("GET /api/projects/{name}/versions/{v}/assembly", s.getAssembly)
+	mux.HandleFunc("GET /api/projects/{name}/versions/{v}/assembly/parts/{i}", s.assemblyPart)
 	mux.HandleFunc("GET /api/sessions", s.listSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", s.getSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.endSession)
@@ -685,6 +691,58 @@ func (s *Server) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// ---- assembly ----------------------------------------------------------------
+
+// getAssembly returns the version's assembly parts, building them on first request
+// (202 while building; an assembly event follows).
+func (s *Server) getAssembly(w http.ResponseWriter, r *http.Request) {
+	if s.assembly == nil {
+		writeErr(w, http.StatusNotFound, errors.New("assembly mode is not enabled"))
+		return
+	}
+	name, ok := projectName(w, r)
+	if !ok {
+		return
+	}
+	n, ok := versionParam(w, r)
+	if !ok {
+		return
+	}
+	v, err := s.svc.Version(name, n)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	res := s.assembly.Start(v)
+	code := http.StatusOK
+	if res.Status == "running" {
+		code = http.StatusAccepted
+	}
+	writeJSON(w, code, res)
+}
+
+func (s *Server) assemblyPart(w http.ResponseWriter, r *http.Request) {
+	name, ok := projectName(w, r)
+	if !ok {
+		return
+	}
+	n, ok := versionParam(w, r)
+	if !ok {
+		return
+	}
+	i, err := strconv.Atoi(r.PathValue("i"))
+	if err != nil || i < 0 || i > 999 {
+		writeErr(w, http.StatusBadRequest, errors.New("part index must be a number"))
+		return
+	}
+	v, err := s.svc.Version(name, n)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	serveFile(w, r, assembly.PartFile(v, i), "model/stl")
 }
 
 // ---- sessions --------------------------------------------------------------

@@ -25,7 +25,18 @@ optionally estimate_print → request_approval → wait for the user to click Ap
 viewer at http://localhost:8080 → print_job. You cannot approve a print yourself.
 Write models with named top-level parameters in OpenSCAD Customizer style, for example
 "wall = 2; // [1:0.5:5] Wall thickness in mm", and change dimensions by passing params to
-compile_model with empty scad_code instead of rewriting the file.`
+compile_model with empty scad_code instead of rewriting the file.
+
+For a model with several parts, the viewer has an Assembly tab that adds the parts one by
+one along a timeline. Support it by declaring the build order and drawing one step on its
+own when asked:
+  /* [Hidden] */
+  assembly = [["base", "Base plate"], ["gear", "Gear"], ["lid", "Lid"]];  // build order
+  assembly_only = "";  // the pipeline sets this to one ID to render that step alone
+  module step(id) { if (assembly_only == "" || assembly_only == id) children(); }
+and wrap each part in the assembled view: step("gear") color("orange") translate(...) gear();
+Give every part its own color(). If the model has a "part" parameter, keep an
+"assembled" option that places every part where it belongs, with its clearances.`
 
 type CompileIn struct {
 	Project  string         `json:"project" jsonschema:"folder name: letters, digits, - and _"`

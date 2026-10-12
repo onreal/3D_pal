@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/margarit/printpipe/internal/assembly"
 	"github.com/margarit/printpipe/internal/bridge"
 	"github.com/margarit/printpipe/internal/config"
 	"github.com/margarit/printpipe/internal/events"
@@ -129,6 +130,7 @@ func run() error {
 		logger.Info("openscad has no manifold backend; complex models compile slowly")
 	}
 	hub := events.NewHub()
+	projects := project.NewStore(db, workDir)
 	reg := sessions.NewRegistry()
 	reg.OnChange = func(kind string, info sessions.Info) {
 		hub.Publish(events.Session, map[string]any{"kind": kind, "session": info})
@@ -139,7 +141,7 @@ func run() error {
 		Runner:    exec,
 		Config:    cfg,
 		Jobs:      jobs.NewStore(db),
-		Projects:  project.NewStore(db, workDir),
+		Projects:  projects,
 		SCAD:      compiler,
 		Slicers:   slicer.Registered(slicer.Deps{Runner: exec}),
 		Events:    hub,
@@ -153,7 +155,8 @@ func run() error {
 	mcpServer := mcpserver.New(svc, version, reg)
 	mcpHTTP := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer },
 		&mcp.StreamableHTTPOptions{SessionTimeout: 12 * time.Hour, Logger: logger})
-	srv := &http.Server{Addr: *addr, Handler: web.Handler(svc, cfg, hub, nil, web.Options{MCP: mcpHTTP, Sessions: reg}),
+	asm := assembly.New(compiler, projects, func(r assembly.Result) { hub.Publish(events.Assembly, r) })
+	srv := &http.Server{Addr: *addr, Handler: web.Handler(svc, cfg, hub, nil, web.Options{MCP: mcpHTTP, Sessions: reg, Assembly: asm}),
 		ReadHeaderTimeout: 10 * time.Second}
 	httpErr := make(chan error, 1)
 	go func() {

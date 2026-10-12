@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/margarit/printpipe/internal/assembly"
 	"github.com/margarit/printpipe/internal/bridge"
 	"github.com/margarit/printpipe/internal/events"
 	"github.com/margarit/printpipe/internal/mcpserver"
@@ -221,4 +222,51 @@ func TestBridgeJoinsTheSameServer(t *testing.T) {
 		t.Fatal("bridge did not stop")
 	}
 	waitFor(t, "bridged session closed", func() bool { return m.reg.OpenCount() == 0 })
+}
+
+func TestAssemblyEndpoints(t *testing.T) {
+	env := pipelinetest.New(t)
+	asm := assembly.New(env.SCAD, env.Projects, nil)
+	srv := httptest.NewServer(web.Handler(env.Svc, env.Config, events.NewHub(), fstest.MapFS{}, web.Options{Assembly: asm}))
+	defer srv.Close()
+	env.Svc.Compile(context.Background(), "box", pipelinetest.Cube, nil)
+	get := func(path string) (int, []byte) {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, b
+	}
+	code, body := get("/api/projects/box/versions/1/assembly")
+	if code != 202 || !strings.Contains(string(body), `"running"`) {
+		t.Fatalf("%d %s", code, body)
+	}
+	v, _ := env.Svc.Version("box", 1)
+	asm.Wait(v)
+	code, body = get("/api/projects/box/versions/1/assembly")
+	var r assembly.Result
+	json.Unmarshal(body, &r)
+	if code != 200 || r.Status != "done" || r.Mode != assembly.Pieces || len(r.Parts) != 2 || r.Parts[0].Max.Z != 2 {
+		t.Fatalf("%d %+v", code, r)
+	}
+	if code, body = get("/api/projects/box/versions/1/assembly/parts/1"); code != 200 || len(body) != 84+12*50 {
+		t.Fatalf("part STL: %d %d bytes", code, len(body))
+	}
+	for path, want := range map[string]int{
+		"/api/projects/box/versions/1/assembly/parts/x": 400,
+		"/api/projects/box/versions/1/assembly/parts/9": 404,
+		"/api/projects/box/versions/7/assembly":         404,
+		"/api/projects/..%2Fx/versions/1/assembly":      400,
+	} {
+		if code, _ := get(path); code != want {
+			t.Errorf("%s: %d, want %d", path, code, want)
+		}
+	}
+	plain := httptest.NewServer(web.Handler(env.Svc, env.Config, events.NewHub(), fstest.MapFS{}, web.Options{}))
+	defer plain.Close()
+	if resp, _ := http.Get(plain.URL + "/api/projects/box/versions/1/assembly"); resp.StatusCode != 404 {
+		t.Fatalf("without the service: %d", resp.StatusCode)
+	}
 }

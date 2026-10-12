@@ -242,6 +242,7 @@ type CompileResult struct {
 	Params       map[string]any      `json:"params"`
 	Images       []Image             `json:"-"`
 	Warnings     []string            `json:"warnings,omitempty"`
+	Assembly     int                 `json:"assembly_steps,omitempty"`
 	Estimate     *estimates.Estimate `json:"estimate,omitempty"`
 	ViewerURL    string              `json:"viewer_url"`
 }
@@ -271,6 +272,9 @@ func (r CompileResult) Summary() string {
 	}
 	if r.Estimate != nil {
 		fmt.Fprintf(&b, "\nEstimate: %s.", r.Estimate.Line())
+	}
+	if r.Assembly > 0 {
+		fmt.Fprintf(&b, "\nAssembly: %d steps; the viewer's Assembly tab plays them in order.", r.Assembly)
 	}
 	for _, w := range r.Warnings {
 		fmt.Fprintf(&b, "\nWarning: %s", w)
@@ -358,6 +362,11 @@ func (s *Service) compile(ctx context.Context, proj, code string, params map[str
 	v.Params = scad.Values(decl, params)
 
 	res := CompileResult{Project: proj, Size: m.Size(), Params: v.Params, ViewerURL: s.d.ViewerURL}
+	if steps, err := scad.ParseAssembly(code); err != nil {
+		res.Warnings = append(res.Warnings, "assembly steps: "+err.Error())
+	} else {
+		res.Assembly = len(steps)
+	}
 	for i, angle := range set.Pipeline.PreviewAngles {
 		png := v.Path("preview-" + angle + ".png")
 		if err := s.d.SCAD.Render(ctx, v.Path(project.STL), png, angle); err != nil {
