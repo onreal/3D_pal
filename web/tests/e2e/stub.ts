@@ -44,6 +44,15 @@ export const kinds = {
   display_modes: ["solid", "wireframe", "xray", "edges"], log_levels: ["debug", "info", "warn", "error"], support_types: ["tree(auto)", "normal(auto)"],
 };
 
+export const sessionList = [
+  { id: "SESS-CODE", client: "claude-code", client_title: "Claude Code", client_version: "2.1.3", transport: "http",
+    remote_addr: "172.17.0.1:51234", user_agent: "claude-code/2.1.3", connected_at: "2026-10-12T10:00:00Z", last_seen: "2026-10-12T10:05:00Z",
+    calls: 4, last_tool: "compile_model", project: "cube", open: true },
+  { id: "SESS-DESK", client: "claude-desktop", client_version: "0.14.2", transport: "bridge",
+    remote_addr: "127.0.0.1:40000", user_agent: "printpipe-bridge/dev", connected_at: "2026-10-12T09:00:00Z", last_seen: "2026-10-12T09:30:00Z",
+    calls: 1, last_tool: "list_printers", open: true },
+];
+
 export interface StubOptions {
   size?: number;
   jobs?: unknown[];
@@ -64,6 +73,13 @@ export async function stubApi(page: Page, opts: StubOptions = {}) {
     if (path === "/api/settings" && req.method() === "GET") return json(route, settings);
     if (path === "/api/settings" && req.method() === "PUT") return json(route, JSON.parse(req.postData() ?? "{}"));
     if (path === "/api/printer-kinds") return json(route, kinds);
+    if (path === "/api/sessions") return json(route, sessionList);
+    if (path.startsWith("/api/sessions/") && req.method() === "GET") {
+      const id = decodeURIComponent(path.split("/")[3]!);
+      const s = sessionList.find((x) => x.id === id);
+      return s ? json(route, { session: s, runs: [{ session: id, client: s.client, project: "cube", tool: "compile_model", args: "{}", exit_code: 0, message: "ok", started_at: "2026-10-12T10:05:00Z" }] }) : json(route, { error: "no such session" }, 404);
+    }
+    if (path.startsWith("/api/sessions/") && req.method() === "DELETE") return json(route, { ok: true });
     if (path === "/api/printers") return json(route, [A1]);
     if (path === "/api/projects") return json(route, [{ name: "cube", latest_version: 1, updated_at: "2026-10-12T10:00:00Z" }]);
     if (path === "/api/projects/cube/versions") return json(route, [{ version: 1, params: { size }, created_at: "2026-10-12T10:00:00Z", size_mm: { X: size, Y: size, Z: size }, estimates: [] }]);

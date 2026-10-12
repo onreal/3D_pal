@@ -127,7 +127,27 @@ export interface Settings {
 
 export interface Check { name: string; ok: boolean; message: string }
 
+export interface SessionInfo {
+  id: string;
+  client: string;
+  client_version: string;
+  client_title?: string;
+  transport: "http" | "bridge" | "stdio";
+  remote_addr?: string;
+  user_agent?: string;
+  connected_at: string;
+  last_seen: string;
+  calls: number;
+  last_tool?: string;
+  project?: string;
+  open: boolean;
+  closed_at?: string;
+}
+
 export interface Run {
+  session?: string;
+  client?: string;
+  project?: string;
   tool: string;
   args: string;
   exit_code: number | null;
@@ -178,6 +198,9 @@ export const api = {
   pendingJobs: (p: string) => request<Job[]>("GET", `/api/projects/${enc(p)}/jobs`),
   log: (p: string) => request<Run[]>("GET", `/api/projects/${enc(p)}/log`),
   runs: () => request<Run[]>("GET", "/api/runs"),
+  sessions: () => request<SessionInfo[]>("GET", "/api/sessions"),
+  session: (id: string) => request<{ session: SessionInfo; runs: Run[] }>("GET", `/api/sessions/${enc(id)}`),
+  endSession: (id: string) => request<{ ok: boolean }>("DELETE", `/api/sessions/${enc(id)}`),
   startEstimate: (p: string, v: number, printerId: string) =>
     request<Estimate>("POST", `/api/projects/${enc(p)}/versions/${v}/estimate`, { printer_id: printerId }),
   approve: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/approve`),

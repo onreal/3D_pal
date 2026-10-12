@@ -7,6 +7,7 @@ export class JobPanel {
   readonly el = h("section", { class: "panel job-panel", "aria-label": "Print job", hidden: true });
   private job: Job | null = null;
   private printerName = "";
+  private requestedBy = "";
   onShowToolpaths: (job: Job) => void = () => {};
 
   async load(project: string) {
@@ -26,8 +27,10 @@ export class JobPanel {
   }
 
   /** Called for job events: a new request, or an approval made elsewhere. */
-  show(a: Partial<Approval> & { job: Job }) {
+  show(a: Partial<Approval> & { job: Job; client?: string }) {
     const sameJob = this.job?.id === a.job.id;
+    if (!sameJob) this.requestedBy = "";
+    if (a.client) this.requestedBy = a.client;
     this.job = { ...(sameJob ? this.job : {}), ...a.job, estimate: a.estimate ?? a.job.estimate ?? this.job?.estimate };
     if (a.printer_name) this.printerName = a.printer_name;
     this.render();
@@ -58,7 +61,8 @@ export class JobPanel {
 
     replace(this.el,
       h("h2", {}, job.printed ? "Printed" : job.approved ? "Approved" : "Waiting for your approval"),
-      h("p", { class: "job-meta" }, `${job.project} · version ${job.version} · ${this.printerName || job.printer_id} · job `, h("code", {}, job.id)),
+      h("p", { class: "job-meta" }, `${job.project} · version ${job.version} · ${this.printerName || job.printer_id} · job `, h("code", {}, job.id),
+        this.requestedBy ? h("span", { class: "small muted", "data-testid": "requested-by" }, ` · requested by ${this.requestedBy}`) : null),
       job.estimate ? estimateFacts(job.estimate) : null,
       h("button", { class: "link", type: "button", onclick: () => this.onShowToolpaths(job) }, "Show toolpaths"),
       action);

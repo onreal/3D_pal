@@ -7,12 +7,22 @@ import { HistoryPanel } from "./history/panel";
 import { JobPanel } from "./job/panel";
 import { LogPanel } from "./log/panel";
 import { ParamsPanel } from "./params/panel";
+import { clientLabel, decodeFollow, encodeFollow, follows, type Follow } from "./sessions/follow";
+import { SessionsPanel } from "./sessions/panel";
 import { PrinterStatusBar } from "./printer/status";
 import { ToolpathPreview } from "./toolpaths/preview";
 import type { View } from "./viewer/controls";
 import { DISPLAY_MODES, type DisplayMode } from "./viewer/modes";
 import type { Axis } from "./viewer/section";
 import { Viewer, type ModelInfo } from "./viewer/viewer";
+
+function loadFollow(): Follow {
+  try {
+    return decodeFollow(localStorage.getItem("printpipe.follow"));
+  } catch {
+    return { mode: "all" };
+  }
+}
 
 /** The viewer page: the part on the bed, parameters, estimates, history and the approval. */
 export class App {
@@ -26,7 +36,9 @@ export class App {
   private version = 0;
   private latest = 0;
   private printerId = "";
-  private follow = true;
+  private follow: Follow = loadFollow();
+  private followSelect = h("select", { "aria-label": "Follow agent sessions", "data-testid": "follow" });
+  private sessions = new SessionsPanel();
 
   private projectSelect = h("select", { "aria-label": "Project", class: "project-select" });
   private printerSelect = h("select", { "aria-label": "Printer" });
@@ -56,7 +68,9 @@ export class App {
     this.viewer.onMeasure = (d) => (this.measureOut.textContent = d === null ? "" : `${d.toFixed(2)} mm`);
     this.wire();
     this.live.connect();
-    await Promise.all([this.loadSettings(), this.loadPrinters()]);
+    await Promise.all([this.loadSettings(), this.loadPrinters(), this.sessions.load()]);
+    this.sessions.setFollow(this.follow);
+    this.renderFollow();
     await this.loadProjects();
     const first = this.projects[0];
     if (first) await this.openProject(first.name, 0);
@@ -106,21 +120,20 @@ export class App {
       h("div", { class: "pane model-pane" }, toolbar, this.canvasHost, this.info, this.warning, this.empty),
       h("div", { class: "pane toolpaths-pane", hidden: true }, this.toolpaths.el));
 
-    const follow = h("input", { type: "checkbox", checked: true, "aria-label": "Follow the agent" });
-    follow.addEventListener("change", () => (this.follow = follow.checked));
+    this.followSelect.addEventListener("change", () => this.setFollow(decodeFollow(this.followSelect.value)));
 
     replace(this.el,
       h("header", { class: "topbar" },
         h("a", { href: "/", class: "brand" }, h("span", { class: "logo", "aria-hidden": "true" }), "Print Pipeline"),
         this.projectSelect, this.versionLabel,
-        h("label", { class: "inline small follow", title: "Switch to whatever the agent compiles" }, follow, " Follow agent"),
+        h("label", { class: "inline small follow", title: "Switch to the project an agent session works on" }, "Following ", this.followSelect),
         h("span", { class: "spacer" }),
         h("label", { class: "inline small" }, "Printer ", this.printerSelect),
         this.status.el, this.connection,
         h("a", { href: "/settings", class: "button" }, "Settings")),
       h("div", { class: "body" },
         this.stage,
-        h("aside", { class: "sidebar" }, this.job.el, this.estimate.el, this.params.el, this.history.el,
+        h("aside", { class: "sidebar" }, this.sessions.el, this.job.el, this.estimate.el, this.params.el, this.history.el,
           h("details", { class: "panel" }, h("summary", {}, "Run log"), this.log.el))));
   }
 
@@ -160,7 +173,7 @@ export class App {
       this.connection.title = ok ? "Live updates connected" : "Reconnecting to the server…";
     };
     this.live.on("model", async (e) => {
-      if (e.project !== this.project && !this.follow) {
+      if (e.project !== this.project && !follows(this.follow, e)) {
         await this.loadProjects();
         return;
       }
@@ -177,7 +190,7 @@ export class App {
     });
     this.live.on("job", (e) => {
       if (e.job.project !== this.project) {
-        if (!this.follow) return;
+        if (!follows(this.follow, e)) return;
         void this.openProject(e.job.project, e.job.version);
       }
       this.job.show(e);
@@ -192,6 +205,16 @@ export class App {
       this.status.receive(e.printer_id, e.status);
       if (e.job) this.job.show({ job: e.job });
     });
+    this.live.on("session", (e) => {
+      this.sessions.receive(e.session);
+      if (!e.session.open && this.follow.mode === "session" && this.follow.id === e.session.id) {
+        toast(`${clientLabel(e.session)} disconnected; following all sessions again.`, "info");
+        this.setFollow({ mode: "all" });
+      }
+      this.renderFollow();
+    });
+    this.sessions.onFollow = (f) => this.setFollow(f);
+    this.sessions.onOpenProject = (p) => void this.openProject(p, 0).then(() => this.loadProjects());
     this.live.on("settings", () => {
       void this.loadSettings();
       void this.loadPrinters();
@@ -201,6 +224,33 @@ export class App {
   private reloadHistory = debounce(() => {
     if (this.project) void this.history.load(this.project, this.printerId, this.version);
   }, 150);
+
+  private setFollow(f: Follow) {
+    this.follow = f;
+    try {
+      localStorage.setItem("printpipe.follow", encodeFollow(f));
+    } catch {
+      /* private window: the choice lasts for this page only */
+    }
+    this.sessions.setFollow(f);
+    this.renderFollow();
+    if (f.mode === "session") {
+      const s = this.sessions.open.find((x) => x.id === f.id);
+      if (s?.project && s.project !== this.project) void this.openProject(s.project, 0).then(() => this.loadProjects());
+    }
+  }
+
+  private renderFollow() {
+    const open = this.sessions.open;
+    if (this.follow.mode === "session" && !open.some((s) => this.follow.mode === "session" && s.id === this.follow.id)) {
+      this.follow = { mode: "all" };
+    }
+    replace(this.followSelect,
+      h("option", { value: "all" }, `All sessions (${open.length})`),
+      ...open.map((s) => h("option", { value: `session:${s.id}` }, `${clientLabel(s)}${s.project ? ` · ${s.project}` : ""}`)),
+      h("option", { value: "none" }, "Nobody (stay here)"));
+    this.followSelect.value = encodeFollow(this.follow);
+  }
 
   // ---- data ---------------------------------------------------------------
 

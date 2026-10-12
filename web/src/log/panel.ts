@@ -17,11 +17,12 @@ export class LogPanel {
       h("h2", {}, "Run log"),
       runs.length
         ? h("table", { class: "log" },
-            h("thead", {}, h("tr", {}, h("th", {}, "Time"), h("th", {}, "Tool"), h("th", {}, "Exit"), h("th", {}, "Result"))),
+            h("thead", {}, h("tr", {}, h("th", {}, "Time"), h("th", {}, "Tool"), h("th", {}, "By"), h("th", {}, "Exit"), h("th", {}, "Result"))),
             h("tbody", {}, ...runs.map((r) =>
               h("tr", { class: r.exit_code ? "failed" : "" },
                 h("td", { class: "small nowrap" }, new Date(r.started_at).toLocaleTimeString()),
                 h("td", {}, h("code", {}, r.tool)),
+                h("td", { class: "small" }, r.client ?? ""),
                 h("td", {}, r.exit_code === null ? "…" : String(r.exit_code)),
                 h("td", { class: "small msg" }, r.message)))))
         : h("p", { class: "muted" }, "No tool calls yet."));

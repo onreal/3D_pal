@@ -1,11 +1,15 @@
-import type { Approval, Estimate, Job, PrinterStatus, Vec } from "./api";
+import type { Approval, Estimate, Job, PrinterStatus, SessionInfo, Vec } from "./api";
+
+/** The agent session that caused an event; absent for the viewer's own actions. */
+export interface FromSession { session?: string; client?: string }
 
 export interface EventMap {
-  model: { project: string; version: number; size_mm: Vec; fits: boolean };
-  job: Partial<Approval> & { job: Job };
-  estimate: Estimate;
-  printer: { printer_id: string; status: PrinterStatus; job?: Job };
+  model: FromSession & { project: string; version: number; size_mm: Vec; fits: boolean };
+  job: FromSession & Partial<Approval> & { job: Job };
+  estimate: FromSession & Estimate;
+  printer: FromSession & { printer_id: string; status: PrinterStatus; job?: Job };
   settings: { saved_at: string };
+  session: { kind: "opened" | "updated" | "closed"; session: SessionInfo };
 }
 
 type Handler<K extends keyof EventMap> = (data: EventMap[K]) => void;
@@ -20,7 +24,7 @@ export class Live {
     this.source = new EventSource(url);
     this.source.onopen = () => this.onConnection(true);
     this.source.onerror = () => this.onConnection(false);
-    for (const type of ["model", "job", "estimate", "printer", "settings"] as const) {
+    for (const type of ["model", "job", "estimate", "printer", "settings", "session"] as const) {
       this.source.addEventListener(type, (e) => {
         let data: unknown;
         try {
