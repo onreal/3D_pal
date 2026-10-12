@@ -1,0 +1,127 @@
+package bambustudio_test
+
+import (
+	"archive/zip"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/margarit/printpipe/internal/runner"
+	"github.com/margarit/printpipe/internal/slicer"
+	"github.com/margarit/printpipe/internal/slicers/bambustudio"
+)
+
+func TestArgsUseConfiguredProfiles(t *testing.T) {
+	got := bambustudio.Args("/data/profiles/machine.json", "/data/profiles/process.json", "/data/profiles/filament.json",
+		"/work/cube/v1/model.stl", "/work/cube/v1/job.gcode.3mf")
+	want := []string{
+		"--orient", "1", "--arrange", "1",
+		"--load-settings", "/data/profiles/machine.json;/data/profiles/process.json",
+		"--load-filaments", "/data/profiles/filament.json",
+		"--slice", "0", "--outputdir", "/work/cube/v1", "--export-3mf", "job.gcode.3mf", "/work/cube/v1/model.stl",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("args mismatch\n got %q\nwant %q", got, want)
+	}
+}
+
+func zipWith(t *testing.T, files map[string]string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "job.gcode.3mf")
+	f, _ := os.Create(path)
+	zw := zip.NewWriter(f)
+	for name, body := range files {
+		w, _ := zw.Create(name)
+		w.Write([]byte(body))
+	}
+	zw.Close()
+	f.Close()
+	return path
+}
+
+func TestEstimatesFromSlicedFile(t *testing.T) {
+	path := zipWith(t, map[string]string{
+		"Metadata/slice_info.config": `<?xml version="1.0" encoding="UTF-8"?><config><plate>` +
+			`<metadata key="index" value="1"/><metadata key="prediction" value="1260"/>` +
+			`<metadata key="weight" value="7.42"/><metadata key="support_used" value="true"/>` +
+			`<metadata key="outside" value="false"/>` +
+			`<filament id="1" type="PLA" color="#FFFFFF" used_m="2.48" used_g="7.42"/></plate></config>`,
+		"Metadata/plate_1.gcode":           "; HEADER_BLOCK_START\n; BambuStudio 02.00\n; total layer number: 100\n; HEADER_BLOCK_END\nG28\n",
+		"Metadata/project_settings.config": `{"layer_height": "0.2"}`,
+	})
+	res, err := bambustudio.ReadResult(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := slicer.Result{Path: path, Seconds: 1260, Layers: 100, LayerHeight: 0.2, Supports: true,
+		Filaments: []slicer.Filament{{Type: "PLA", Grams: 7.42, Metres: 2.48}}}
+	if res.Seconds != want.Seconds || res.Layers != want.Layers || res.LayerHeight != want.LayerHeight ||
+		!res.Supports || !slices.Equal(res.Filaments, want.Filaments) {
+		t.Fatalf("got %+v\nwant %+v", res, want)
+	}
+}
+
+func TestReadResultNeedsSliceInfo(t *testing.T) {
+	if _, err := bambustudio.ReadResult(zipWith(t, map[string]string{"x": "y"})); err == nil {
+		t.Fatal("want error")
+	}
+}
+
+func profiles(t *testing.T) map[string]string {
+	dir := t.TempDir()
+	m := map[string]string{}
+	for _, k := range []string{slicer.ProfileMachine, slicer.ProfileProcess, slicer.ProfileFilament} {
+		p := filepath.Join(dir, k+".json")
+		os.WriteFile(p, []byte(`{"name":"`+k+`","enable_support":"0","layer_height":"0.2"}`), 0o644)
+		m[k] = p
+	}
+	return m
+}
+
+func TestOverridesWriteAJobProcessFile(t *testing.T) {
+	on, infill := true, 25
+	dst := filepath.Join(t.TempDir(), "process.json")
+	got, err := bambustudio.WriteProcess(profiles(t)[slicer.ProfileProcess], dst,
+		slicer.Overrides{Supports: &on, SupportType: "tree(auto)", LayerHeight: 0.12, Infill: &infill})
+	if err != nil || got != dst {
+		t.Fatal(got, err)
+	}
+	var p map[string]string
+	b, _ := os.ReadFile(dst)
+	json.Unmarshal(b, &p)
+	if p["enable_support"] != "1" || p["support_type"] != "tree(auto)" || p["layer_height"] != "0.12" || p["sparse_infill_density"] != "25%" {
+		t.Fatalf("%v", p)
+	}
+}
+
+func TestNoOverridesUsesProfileAsIs(t *testing.T) {
+	src := profiles(t)[slicer.ProfileProcess]
+	if got, _ := bambustudio.WriteProcess(src, "/nowhere", slicer.Overrides{}); got != src {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestMissingProfilesFailClearly(t *testing.T) {
+	s := bambustudio.New(&runner.Fake{}, "bs")
+	_, err := s.Slice(context.Background(), slicer.Input{Model: "m.stl", OutPath: filepath.Join(t.TempDir(), "j.gcode.3mf")})
+	if !errors.Is(err, bambustudio.ErrNoProfiles) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSliceReportsCLIError(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "job.gcode.3mf")
+	f := &runner.Fake{OnRun: func(string, []string) ([]byte, error) {
+		os.WriteFile(filepath.Join(filepath.Dir(out), "result.json"), []byte(`{"return_code":-50,"error_string":"Some objects are too close"}`), 0o644)
+		return nil, errors.New("bambu-studio failed: exit status 1")
+	}}
+	_, err := bambustudio.New(f, "bs").Slice(context.Background(), slicer.Input{Model: "m.stl", OutPath: out, Profiles: profiles(t)})
+	if err == nil || !strings.Contains(err.Error(), "too close") {
+		t.Fatalf("got %v", err)
+	}
+}
