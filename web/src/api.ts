@@ -144,6 +144,31 @@ export interface SessionInfo {
   closed_at?: string;
 }
 
+export interface AssemblyPart {
+  index: number;
+  id: string;
+  label: string;
+  color?: string;
+  count: number;
+  min: Vec;
+  max: Vec;
+  volume_mm3: number;
+  triangles: number;
+  error?: string;
+}
+
+export interface AssemblyResult {
+  project: string;
+  version: number;
+  status: "running" | "done" | "failed";
+  error?: string;
+  mode?: "steps" | "pieces";
+  note?: string;
+  parts: AssemblyPart[];
+  min: Vec;
+  max: Vec;
+}
+
 export interface Run {
   session?: string;
   client?: string;
@@ -198,6 +223,7 @@ export const api = {
   pendingJobs: (p: string) => request<Job[]>("GET", `/api/projects/${enc(p)}/jobs`),
   log: (p: string) => request<Run[]>("GET", `/api/projects/${enc(p)}/log`),
   runs: () => request<Run[]>("GET", "/api/runs"),
+  assembly: (p: string, v: number) => request<AssemblyResult>("GET", `/api/projects/${enc(p)}/versions/${v}/assembly`),
   sessions: () => request<SessionInfo[]>("GET", "/api/sessions"),
   session: (id: string) => request<{ session: SessionInfo; runs: Run[] }>("GET", `/api/sessions/${enc(id)}`),
   endSession: (id: string) => request<{ ok: boolean }>("DELETE", `/api/sessions/${enc(id)}`),
@@ -224,5 +250,6 @@ export const urls = {
   stl: (p: string, v: number) => `/api/projects/${enc(p)}/model.stl?v=${v}`,
   scad: (p: string, v: number) => `/api/projects/${enc(p)}/model.scad?v=${v}`,
   slice: (p: string, v: number, printerId: string) => `/api/projects/${enc(p)}/versions/${v}/job.gcode.3mf?printer=${enc(printerId)}`,
+  assemblyPart: (p: string, v: number, i: number) => `/api/projects/${enc(p)}/versions/${v}/assembly/parts/${i}`,
   jobFile: (p: string, jobId: string) => `/api/projects/${enc(p)}/job.gcode.3mf?job=${enc(jobId)}`,
 };

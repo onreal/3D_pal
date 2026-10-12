@@ -1,5 +1,6 @@
 import { api, urls, type Job, type PrinterInfo, type ProjectSummary, type Settings } from "./api";
 import { debounce, download, h, replace, toast } from "./dom";
+import { AssemblyPanel } from "./assembly/panel";
 import { EstimatePanel } from "./estimates/panel";
 import { Live } from "./events";
 import { formatSize } from "./format";
@@ -52,7 +53,12 @@ export class App {
   private measureOut = h("output", { class: "measure-out small" });
   private sectionSlider = h("input", { type: "range", min: "0", max: "1", step: "0.01", value: "0.5", "aria-label": "Section position", disabled: true });
   private empty = h("div", { class: "empty", hidden: true });
-  private tabs = { model: h("button", { role: "tab", type: "button", "aria-selected": "true" }, "Model"), toolpaths: h("button", { role: "tab", type: "button", "aria-selected": "false" }, "Toolpaths") };
+  private tabs = {
+    model: h("button", { role: "tab", type: "button", "aria-selected": "true" }, "Model"),
+    assembly: h("button", { role: "tab", type: "button", "aria-selected": "false" }, "Assembly"),
+    toolpaths: h("button", { role: "tab", type: "button", "aria-selected": "false" }, "Toolpaths"),
+  };
+  private assembly = new AssemblyPanel();
   private toolpaths = new ToolpathPreview();
   private job = new JobPanel();
   private estimate = new EstimatePanel();
@@ -114,10 +120,12 @@ export class App {
       h("div", { class: "group" }, shot, stl));
 
     this.tabs.model.addEventListener("click", () => this.showTab("model"));
+    this.tabs.assembly.addEventListener("click", () => this.showTab("assembly"));
     this.tabs.toolpaths.addEventListener("click", () => this.showTab("toolpaths"));
     replace(this.stage,
-      h("div", { class: "tabs", role: "tablist" }, this.tabs.model, this.tabs.toolpaths),
+      h("div", { class: "tabs", role: "tablist" }, this.tabs.model, this.tabs.assembly, this.tabs.toolpaths),
       h("div", { class: "pane model-pane" }, toolbar, this.canvasHost, this.info, this.warning, this.empty),
+      h("div", { class: "pane assembly-pane", hidden: true }, this.assembly.el),
       h("div", { class: "pane toolpaths-pane", hidden: true }, this.toolpaths.el));
 
     this.followSelect.addEventListener("change", () => this.setFollow(decodeFollow(this.followSelect.value)));
@@ -137,12 +145,16 @@ export class App {
           h("details", { class: "panel" }, h("summary", {}, "Run log"), this.log.el))));
   }
 
-  private showTab(tab: "model" | "toolpaths") {
-    this.tabs.model.setAttribute("aria-selected", String(tab === "model"));
-    this.tabs.toolpaths.setAttribute("aria-selected", String(tab === "toolpaths"));
-    (this.stage.querySelector(".model-pane") as HTMLElement).hidden = tab !== "model";
-    (this.stage.querySelector(".toolpaths-pane") as HTMLElement).hidden = tab !== "toolpaths";
+  private tab: "model" | "assembly" | "toolpaths" = "model";
+
+  private showTab(tab: "model" | "assembly" | "toolpaths") {
+    this.tab = tab;
+    for (const t of ["model", "assembly", "toolpaths"] as const) {
+      this.tabs[t].setAttribute("aria-selected", String(t === tab));
+      (this.stage.querySelector(`.${t}-pane`) as HTMLElement).hidden = t !== tab;
+    }
     if (tab === "toolpaths") void this.loadToolpaths();
+    if (tab === "assembly" && this.project) void this.assembly.open(this.project, this.version);
   }
 
   private async loadToolpaths() {
@@ -215,6 +227,7 @@ export class App {
     });
     this.sessions.onFollow = (f) => this.setFollow(f);
     this.sessions.onOpenProject = (p) => void this.openProject(p, 0).then(() => this.loadProjects());
+    this.live.on("assembly", (r) => this.assembly.receive(r));
     this.live.on("settings", () => {
       void this.loadSettings();
       void this.loadPrinters();
@@ -288,6 +301,7 @@ export class App {
   private applyPrinter() {
     const p = this.currentPrinter();
     this.viewer.setPrinter(p?.capabilities ?? null);
+    this.assembly.setPrinter(p?.capabilities ?? null);
     this.status.set(p);
     this.estimate.set(this.project, this.version, this.printerId);
   }
@@ -331,7 +345,8 @@ export class App {
     this.history.setShown(version);
     this.reloadHistory();
     if (version !== this.latest) void this.params.load(this.project, version);
-    if (!(this.stage.querySelector(".toolpaths-pane") as HTMLElement).hidden) void this.loadToolpaths();
+    if (this.tab === "toolpaths") void this.loadToolpaths();
+    if (this.tab === "assembly") void this.assembly.open(this.project, version);
   }
 
   private showInfo(i: ModelInfo) {

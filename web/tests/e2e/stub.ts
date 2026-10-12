@@ -4,9 +4,9 @@ import { readFileSync } from "node:fs";
 // A 20 mm cube sliced by Bambu Studio 02.08.02.61 with A1 presets (100 layers).
 const slicedCube = readFileSync(new URL("./fixtures/cube.gcode.3mf", import.meta.url));
 
-/** ASCII STL of an axis-aligned box. */
-export function cubeSTL(x: number, y = x, z = x): string {
-  const p = [[0, 0, 0], [x, 0, 0], [x, y, 0], [0, y, 0], [0, 0, z], [x, 0, z], [x, y, z], [0, y, z]];
+/** ASCII STL of an axis-aligned box, optionally moved by (ox, oy, oz). */
+export function cubeSTL(x: number, y = x, z = x, ox = 0, oy = 0, oz = 0): string {
+  const p = [[0, 0, 0], [x, 0, 0], [x, y, 0], [0, y, 0], [0, 0, z], [x, 0, z], [x, y, z], [0, y, z]].map(([a, b, c]) => [a! + ox, b! + oy, c! + oz]);
   const f = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
   return "solid cube\n" + f.map((t) => ` facet normal 0 0 0\n  outer loop\n${t.map((i) => `   vertex ${p[i]!.join(" ")}`).join("\n")}\n  endloop\n endfacet`).join("\n") + "\nendsolid cube\n";
 }
@@ -53,6 +53,18 @@ export const sessionList = [
     calls: 1, last_tool: "list_printers", open: true },
 ];
 
+const asmParts = [
+  { index: 0, id: "base", label: "Base plate", color: "#FF720C", count: 1, min: { X: 0, Y: 0, Z: 0 }, max: { X: 40, Y: 40, Z: 3 }, volume_mm3: 4800, triangles: 12 },
+  { index: 1, id: "pins", label: "Pins", color: "#28282B", count: 2, min: { X: 5, Y: 5, Z: 3 }, max: { X: 35, Y: 35, Z: 15 }, volume_mm3: 96, triangles: 24 },
+  { index: 2, id: "lid", label: "Lid", color: "#3C8DE8", count: 1, min: { X: 0, Y: 0, Z: 15 }, max: { X: 40, Y: 40, Z: 18 }, volume_mm3: 4800, triangles: 12 },
+];
+export const assemblyResult = { project: "cube", version: 1, status: "done", mode: "steps", parts: asmParts, min: { X: 0, Y: 0, Z: 0 }, max: { X: 40, Y: 40, Z: 18 } };
+const asmSTL = [
+  cubeSTL(40, 40, 3),
+  cubeSTL(2, 2, 12, 5, 5, 3) + cubeSTL(2, 2, 12, 33, 33, 3),
+  cubeSTL(40, 40, 3, 0, 0, 15),
+];
+
 export interface StubOptions {
   size?: number;
   jobs?: unknown[];
@@ -92,6 +104,9 @@ export async function stubApi(page: Page, opts: StubOptions = {}) {
       return json(route, { id, project: "cube", version: 1, printer_id: "a1", approved: true, printed: false, estimate });
     }
     if (path === "/api/projects/cube/versions/1/estimate") return json(route, estimate);
+    if (path === "/api/projects/cube/versions/1/assembly") return json(route, assemblyResult);
+    const part = path.match(/^\/api\/projects\/cube\/versions\/1\/assembly\/parts\/(\d+)$/);
+    if (part) return route.fulfill({ status: 200, contentType: "model/stl", body: asmSTL[Number(part[1])] ?? "" });
     if (path === "/api/projects/cube/versions/1/job.gcode.3mf" || path === "/api/projects/cube/job.gcode.3mf")
       return route.fulfill({ status: 200, contentType: "application/vnd.ms-package.3dmanufacturing-3dmodel+xml", body: slicedCube });
     return json(route, { error: `no stub for ${req.method()} ${path}` }, 404);
