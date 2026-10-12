@@ -77,3 +77,17 @@ func TestCallerInContext(t *testing.T) {
 		t.Fatal("caller in an empty context")
 	}
 }
+
+func TestIdentifyFillsInTheClient(t *testing.T) {
+	r := sessions.NewRegistry()
+	n := 0
+	r.OnChange = func(string, sessions.Info) { n++ }
+	r.Open("a", "", "", "", sessions.Stdio, nil)
+	r.Identify("a", "claude-code", "2.1", "Claude Code")
+	r.Identify("a", "claude-code", "2.1", "Claude Code") // no change, no event
+	r.Identify("a", "", "", "")
+	r.Identify("missing", "x", "1", "")
+	if i, _ := r.Get("a"); i.Client != "claude-code" || i.Title != "Claude Code" || n != 2 {
+		t.Fatalf("%+v events=%d", i, n)
+	}
+}

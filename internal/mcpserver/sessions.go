@@ -15,8 +15,9 @@ import (
 // tracker reports this server's sessions to the registry and tags each tool call's
 // context with the session that made it.
 type tracker struct {
-	reg *sessions.Registry
-	ids sync.Map // *mcp.ServerSession → session ID
+	reg    *sessions.Registry
+	ids    sync.Map // *mcp.ServerSession → session ID
+	opened sync.Map // *mcp.ServerSession → struct{}
 }
 
 // id is the session's MCP session ID over HTTP; a stdio session has none, so it gets one.
@@ -34,8 +35,18 @@ func (t *tracker) id(ss *mcp.ServerSession) string {
 	return v.(string)
 }
 
-func (t *tracker) initialized(_ context.Context, req *mcp.InitializedRequest) {
-	ss := req.Session
+// initialized is a fallback: newer protocol versions may not send the notification, so
+// sessions are opened when their initialize request succeeds (see middleware).
+func (t *tracker) initialized(_ context.Context, req *mcp.InitializedRequest) { t.open(req.Session) }
+
+// open registers a session once, and watches for it to close.
+func (t *tracker) open(ss *mcp.ServerSession) {
+	if ss == nil {
+		return
+	}
+	if _, loaded := t.opened.LoadOrStore(ss, struct{}{}); loaded {
+		return
+	}
 	id := t.id(ss)
 	var name, version, title string
 	if p := ss.InitializeParams(); p != nil && p.ClientInfo != nil {
@@ -54,20 +65,45 @@ func (t *tracker) initialized(_ context.Context, req *mcp.InitializedRequest) {
 			t.reg.Close(id)
 		}
 		t.ids.Delete(ss)
+		t.opened.Delete(ss)
 	}()
 }
 
-// middleware records tool calls on the session and puts the caller in the context.
+func clientInfo(ss *mcp.ServerSession) (name, version, title string) {
+	if ss == nil {
+		return
+	}
+	if p := ss.InitializeParams(); p != nil && p.ClientInfo != nil {
+		return p.ClientInfo.Name, p.ClientInfo.Version, p.ClientInfo.Title
+	}
+	return
+}
+
+// middleware lists a session once its client has said who it is (or at its first tool
+// call), records tool calls on it, and puts the caller in the context. Sessions that only
+// negotiate and leave are never listed.
 func (t *tracker) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-		call, ok := req.(*mcp.CallToolRequest)
-		if !ok || call.Session == nil {
-			return next(ctx, method, req)
+		ss, _ := req.GetSession().(*mcp.ServerSession)
+		call, isCall := req.(*mcp.CallToolRequest)
+		if !isCall || ss == nil {
+			res, err := next(ctx, method, req)
+			if name, version, title := clientInfo(ss); name != "" {
+				t.open(ss)
+				if t.reg != nil {
+					t.reg.Identify(t.id(ss), name, version, title)
+				}
+			}
+			return res, err
 		}
-		id := t.id(call.Session)
-		client := "unknown client"
-		if p := call.Session.InitializeParams(); p != nil && p.ClientInfo != nil && p.ClientInfo.Name != "" {
-			client = p.ClientInfo.Name
+		t.open(ss)
+		id := t.id(ss)
+		name, version, title := clientInfo(ss)
+		client := name
+		if client == "" {
+			client = "unknown client"
+		} else if t.reg != nil {
+			t.reg.Identify(id, name, version, title)
 		}
 		var args struct {
 			Project string `json:"project"`

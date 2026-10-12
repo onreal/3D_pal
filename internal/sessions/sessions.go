@@ -96,6 +96,18 @@ func (r *Registry) Open(id, client, version, title, transport string, closer fun
 	r.notify(Opened, i)
 }
 
+// Identify fills in the client's name once it is known; it changes nothing otherwise.
+func (r *Registry) Identify(id, client, version, title string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	i, ok := r.byID[id]
+	if !ok || client == "" || (i.Client == client && i.Version == version && i.Title == title) {
+		return
+	}
+	i.Client, i.Version, i.Title = client, version, title
+	r.notify(Updated, i)
+}
+
 // Touch records a tool call on a session.
 func (r *Registry) Touch(id, tool, project string) {
 	r.mu.Lock()
