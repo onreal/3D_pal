@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,15 +18,19 @@ var (
 	ErrNotApproved = errors.New("not approved yet: the user must click Approve in the viewer")
 	ErrFileChanged = errors.New("the job file changed after approval: request approval again")
 	ErrNotFound    = errors.New("no such job")
+	ErrPrinted     = errors.New("this job was already sent to the printer: request approval again to print another copy")
 )
 
 type Job struct {
-	ID         string `json:"id"`
-	Project    string `json:"project"`
-	PrinterID  string `json:"printer_id"`
-	FilePath   string `json:"file_path"`
-	FileSHA256 string `json:"file_sha256"`
-	Approved   bool   `json:"approved"`
+	ID         string          `json:"id"`
+	Project    string          `json:"project"`
+	PrinterID  string          `json:"printer_id"`
+	FilePath   string          `json:"file_path"`
+	FileSHA256 string          `json:"file_sha256"`
+	Version    int             `json:"version"`
+	Approved   bool            `json:"approved"`
+	Printed    bool            `json:"printed"`
+	Estimate   json.RawMessage `json:"estimate,omitempty"`
 }
 
 type Store struct{ db *sql.DB }
@@ -34,6 +39,11 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
 // Request records a job for file on printerID, unapproved.
 func (s *Store) Request(project, printerID, file string) (Job, error) {
+	return s.RequestVersion(project, 0, printerID, file, nil)
+}
+
+// RequestVersion records an unapproved job for a project version, with the estimate shown at approval.
+func (s *Store) RequestVersion(project string, version int, printerID, file string, estimate any) (Job, error) {
 	sum, err := hashFile(file)
 	if err != nil {
 		return Job{}, err
@@ -42,21 +52,32 @@ func (s *Store) Request(project, printerID, file string) (Job, error) {
 	if err != nil {
 		return Job{}, err
 	}
-	job := Job{ID: id, Project: project, PrinterID: printerID, FilePath: file, FileSHA256: sum}
-	_, err = s.db.Exec(`INSERT INTO jobs (id, project, printer_id, file_path, file_sha256) VALUES (?, ?, ?, ?, ?)`,
-		job.ID, job.Project, job.PrinterID, job.FilePath, job.FileSHA256)
+	job := Job{ID: id, Project: project, Version: version, PrinterID: printerID, FilePath: file, FileSHA256: sum}
+	var est any
+	if estimate != nil {
+		b, err := json.Marshal(estimate)
+		if err != nil {
+			return Job{}, err
+		}
+		job.Estimate, est = b, string(b)
+	}
+	_, err = s.db.Exec(`INSERT INTO jobs (id, project, version, printer_id, file_path, file_sha256, estimate) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		job.ID, job.Project, job.Version, job.PrinterID, job.FilePath, job.FileSHA256, est)
 	return job, err
 }
 
 func (s *Store) Get(id string) (Job, error) {
 	var j Job
-	var approvedAt sql.NullString
-	err := s.db.QueryRow(`SELECT id, project, printer_id, file_path, file_sha256, approved_at FROM jobs WHERE id = ?`, id).
-		Scan(&j.ID, &j.Project, &j.PrinterID, &j.FilePath, &j.FileSHA256, &approvedAt)
+	var approvedAt, printedAt, est sql.NullString
+	err := s.db.QueryRow(`SELECT id, project, version, printer_id, file_path, file_sha256, approved_at, printed_at, estimate FROM jobs WHERE id = ?`, id).
+		Scan(&j.ID, &j.Project, &j.Version, &j.PrinterID, &j.FilePath, &j.FileSHA256, &approvedAt, &printedAt, &est)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, fmt.Errorf("job %s: %w", id, ErrNotFound)
 	}
-	j.Approved = approvedAt.Valid
+	j.Approved, j.Printed = approvedAt.Valid, printedAt.Valid
+	if est.Valid {
+		j.Estimate = json.RawMessage(est.String)
+	}
 	return j, err
 }
 
@@ -82,6 +103,9 @@ func (s *Store) CheckPrintable(id, file string) error {
 	if !j.Approved {
 		return ErrNotApproved
 	}
+	if j.Printed {
+		return ErrPrinted
+	}
 	sum, err := hashFile(file)
 	if err != nil {
 		return err
@@ -91,6 +115,40 @@ func (s *Store) CheckPrintable(id, file string) error {
 	}
 	return nil
 }
+
+// MarkPrinted records that the job reached the printer, so it cannot be sent twice.
+func (s *Store) MarkPrinted(id string) error {
+	_, err := s.db.Exec(`UPDATE jobs SET printed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+		updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`, id)
+	return err
+}
+
+// Pending lists approved-or-waiting jobs that were not printed yet, newest first.
+func (s *Store) Pending(project string) ([]Job, error) {
+	rows, err := s.db.Query(`SELECT id FROM jobs WHERE project = ? AND printed_at IS NULL ORDER BY created_at DESC`, project)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	rows.Close()
+	out := []Job{}
+	for _, id := range ids {
+		j, err := s.Get(id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, nil
+}
+
+// HashFile returns the file's SHA-256 in hex.
+func HashFile(path string) (string, error) { return hashFile(path) }
 
 func hashFile(path string) (string, error) {
 	f, err := os.Open(path)

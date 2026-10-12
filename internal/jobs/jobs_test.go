@@ -88,3 +88,23 @@ func TestUnknownJob(t *testing.T) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
+
+func TestJobIsSentOnlyOnce(t *testing.T) {
+	store, dir := newStore(t)
+	file := writeFile(t, dir, "job.gcode.3mf", "v1")
+	job, _ := store.RequestVersion("cube", 3, "a1", file, map[string]any{"minutes": 21})
+	store.Approve(job.ID)
+	if err := store.MarkPrinted(job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CheckPrintable(job.ID, file); !errors.Is(err, jobs.ErrPrinted) {
+		t.Fatalf("want ErrPrinted, got %v", err)
+	}
+	got, _ := store.Get(job.ID)
+	if got.Version != 3 || string(got.Estimate) != `{"minutes":21}` {
+		t.Fatalf("%+v", got)
+	}
+	if p, _ := store.Pending("cube"); len(p) != 0 {
+		t.Fatalf("printed job still pending: %+v", p)
+	}
+}
