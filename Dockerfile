@@ -35,19 +35,30 @@ RUN test -n "$BAMBU_APPIMAGE_URL" \
  && unsquashfs -q -n -o "$offset" -d /opt/bambu-studio /tmp/bs.AppImage \
  && rm /tmp/bs.AppImage && test -x /opt/bambu-studio/AppRun
 
+# 3b. OpenSCAD: a pinned nightly. The last release (2021.01) only has the CGAL engine; the
+# Manifold engine in current builds compiles complex models 100x faster (a 667-line gear
+# assembly: 268 s on 2021.01, 1.9 s with Manifold). Unpacked like Bambu Studio.
+FROM slicer AS openscad
+ARG OPENSCAD_APPIMAGE_URL=https://files.openscad.org/snapshots/OpenSCAD-2026.09.30-x86_64.AppImage
+RUN curl -fL --retry 3 "$OPENSCAD_APPIMAGE_URL" -o /tmp/os.AppImage \
+ && offset=$(python3 -c 'import struct,sys; b=open(sys.argv[1],"rb").read(64); shoff,=struct.unpack_from("<Q",b,0x28); shentsize,shnum=struct.unpack_from("<HH",b,0x3A); print(shoff+shentsize*shnum)' /tmp/os.AppImage) \
+ && unsquashfs -q -n -o "$offset" -d /opt/openscad /tmp/os.AppImage \
+ && rm /tmp/os.AppImage && test -x /opt/openscad/AppRun
+
 # 4. Runtime
 FROM --platform=linux/amd64 ubuntu:24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      openscad xvfb xauth curl ca-certificates tini \
+      xvfb xauth curl ca-certificates tini \
       libgtk-3-0t64 libwebkit2gtk-4.1-0 libgl1 libegl1 libglu1-mesa libgl1-mesa-dri \
       libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libsoup-3.0-0 libsecret-1-0 \
       libosmesa6 libfuse2t64 locales fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=slicer /opt/bambu-studio /opt/bambu-studio
+COPY --from=openscad /opt/openscad /opt/openscad
 ENV BAMBU_STUDIO=/opt/bambu-studio/AppRun \
-    OPENSCAD=openscad \
+    OPENSCAD=/opt/openscad/AppRun \
     PRINTPIPE_DATA=/data \
     PRINTPIPE_WORK=/work
 

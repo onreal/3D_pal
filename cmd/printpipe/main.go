@@ -119,7 +119,15 @@ func run() error {
 		workDir = *work
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	exec := runner.Exec{}
+	compiler := scad.New(exec, envOr("OPENSCAD", "openscad"))
+	if b := compiler.UseBestBackend(ctx); b != "" {
+		logger.Info("openscad geometry backend", "backend", b)
+	} else {
+		logger.Info("openscad has no manifold backend; complex models compile slowly")
+	}
 	hub := events.NewHub()
 	reg := sessions.NewRegistry()
 	reg.OnChange = func(kind string, info sessions.Info) {
@@ -132,16 +140,13 @@ func run() error {
 		Config:    cfg,
 		Jobs:      jobs.NewStore(db),
 		Projects:  project.NewStore(db, workDir),
-		SCAD:      scad.New(exec, envOr("OPENSCAD", "openscad")),
+		SCAD:      compiler,
 		Slicers:   slicer.Registered(slicer.Deps{Runner: exec}),
 		Events:    hub,
 		Logger:    logger,
 		ViewerURL: *viewerURL,
 	})
 	defer svc.Close()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// One MCP server for every session: Streamable HTTP at /mcp (many clients at once),
 	// and stdio when the container was started with docker run -i.

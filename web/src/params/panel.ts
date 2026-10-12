@@ -61,6 +61,14 @@ export class ParamsPanel {
   private status = h("p", { class: "muted small" });
   private busy = false;
   private pending = false;
+  private started = 0;
+
+  /** "Recompiling… 12 s", so a slow model never looks frozen. */
+  private showProgress() {
+    if (!this.busy) return;
+    const secs = Math.round((Date.now() - this.started) / 1000);
+    this.status.textContent = `Recompiling… ${secs} s${this.pending ? " (your latest change is next)" : ""}`;
+  }
 
   async load(project: string, version = 0) {
     this.project = project;
@@ -103,18 +111,23 @@ export class ParamsPanel {
   private async submit() {
     if (this.busy) {
       this.pending = true;
+      this.showProgress();
       return;
     }
     this.busy = true;
+    this.started = Date.now();
     this.status.className = "muted small";
-    this.status.textContent = "Recompiling…";
+    this.showProgress();
+    const timer = setInterval(() => this.showProgress(), 1000);
     try {
       const res = await api.setParams(this.project, this.values());
-      this.status.textContent = `Version ${res.version} compiled.`;
+      const secs = Math.round((Date.now() - this.started) / 1000);
+      this.status.textContent = `Version ${res.version} compiled in ${secs} s.`;
     } catch (e) {
       this.status.className = "error small";
       this.status.textContent = e instanceof ApiError ? e.message : String(e);
     } finally {
+      clearInterval(timer);
       this.busy = false;
       if (this.pending) {
         this.pending = false;

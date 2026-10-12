@@ -24,6 +24,9 @@ func TestRealOpenSCADCompileAndRender(t *testing.T) {
 	os.WriteFile(scadPath, src, 0o644)
 	c := scad.New(runner.Exec{}, os.Getenv("OPENSCAD"))
 	ctx := context.Background()
+	if b := c.UseBestBackend(ctx); b != "manifold" {
+		t.Fatalf("the image's OpenSCAD should offer the manifold backend, got %q", b)
+	}
 
 	defines, err := scad.Defines(scad.ParseParams(string(src)), map[string]any{"size": 25.0})
 	if err != nil {
@@ -53,7 +56,7 @@ func TestRealOpenSCADReportsSyntaxErrors(t *testing.T) {
 	dir := t.TempDir()
 	scadPath := filepath.Join(dir, "model.scad")
 	os.WriteFile(scadPath, []byte("size = 20;\ncube(size;\n"), 0o644)
-	_, err := scad.New(runner.Exec{}, "").Compile(context.Background(), scadPath, filepath.Join(dir, "model.stl"), nil)
+	_, err := scad.New(runner.Exec{}, os.Getenv("OPENSCAD")).Compile(context.Background(), scadPath, filepath.Join(dir, "model.stl"), nil)
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("line 2")) {
 		t.Fatalf("want a parser error on line 2, got %v", err)
 	}
@@ -63,7 +66,7 @@ func TestRealOpenSCADEmptyModel(t *testing.T) {
 	dir := t.TempDir()
 	scadPath := filepath.Join(dir, "model.scad")
 	os.WriteFile(scadPath, []byte("size = 20;\nmodule box() { cube(size); }\n"), 0o644)
-	_, err := scad.New(runner.Exec{}, "").Compile(context.Background(), scadPath, filepath.Join(dir, "model.stl"), nil)
+	_, err := scad.New(runner.Exec{}, os.Getenv("OPENSCAD")).Compile(context.Background(), scadPath, filepath.Join(dir, "model.stl"), nil)
 	if err == nil {
 		t.Fatal("an empty model compiled")
 	}

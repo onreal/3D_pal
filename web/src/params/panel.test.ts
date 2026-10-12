@@ -44,3 +44,30 @@ describe("parameter controls", () => {
     expect(p.el.textContent).toContain("no top-level parameters");
   });
 });
+
+describe("recompiling", () => {
+  test("shows elapsed time and a queued change, then the result", async () => {
+    vi.useFakeTimers();
+    let resolve!: (v: unknown) => void;
+    const fetchMock = vi.fn(() => new Promise((r) => (resolve = r)));
+    vi.stubGlobal("fetch", fetchMock);
+    const p = new ParamsPanel();
+    (p as unknown as { project: string }).project = "cube";
+    p.render(params);
+    const range = p.el.querySelector<HTMLInputElement>('input[type="range"]')!;
+    range.value = "30";
+    range.dispatchEvent(new Event("input"));
+    await vi.advanceTimersByTimeAsync(600); // debounce
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(p.el.textContent).toMatch(/Recompiling… 3 s/);
+    range.value = "31";
+    range.dispatchEvent(new Event("input"));
+    await vi.advanceTimersByTimeAsync(700);
+    expect(p.el.textContent).toContain("your latest change is next");
+    resolve({ ok: true, status: 200, text: async () => JSON.stringify({ version: 2 }) });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // the first compile, then the queued one
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+});

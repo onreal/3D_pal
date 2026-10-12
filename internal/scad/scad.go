@@ -15,8 +15,9 @@ import (
 )
 
 type Compiler struct {
-	run    runner.Runner
-	binary string
+	run     runner.Runner
+	binary  string
+	backend string // "manifold" when this OpenSCAD supports it; empty for the default (CGAL)
 }
 
 func New(r runner.Runner, binary string) *Compiler {
@@ -24,6 +25,17 @@ func New(r runner.Runner, binary string) *Compiler {
 		binary = "openscad"
 	}
 	return &Compiler{run: r, binary: binary}
+}
+
+// UseBestBackend switches to the Manifold geometry engine when this OpenSCAD has it
+// (2023 and later). On complex models it is tens to hundreds of times faster than the
+// CGAL engine OpenSCAD 2021 uses. It returns the backend chosen.
+func (c *Compiler) UseBestBackend(ctx context.Context) string {
+	// A build without Manifold rejects the unknown option; one with it prints its version.
+	if _, err := c.run.Run(ctx, c.binary, "--backend=manifold", "--version"); err == nil {
+		c.backend = "manifold"
+	}
+	return c.backend
 }
 
 // Cameras for preview angles, as OpenSCAD gimbal rotations (x, y, z in degrees).
@@ -38,7 +50,11 @@ var Cameras = map[string][3]int{
 // mesh returns OpenSCAD's own message so the agent can fix the code.
 func (c *Compiler) Compile(ctx context.Context, scadPath, stlPath string, defines []string) (*mesh.Mesh, error) {
 	os.Remove(stlPath)
-	args := append([]string{"-o", stlPath, "--export-format", "binstl"}, defines...)
+	args := []string{"-o", stlPath, "--export-format", "binstl"}
+	if c.backend != "" {
+		args = append(args, "--backend="+c.backend)
+	}
+	args = append(args, defines...)
 	args = append(args, scadPath)
 	out, err := c.run.Run(ctx, c.binary, args...)
 	if err != nil {

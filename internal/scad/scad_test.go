@@ -83,3 +83,36 @@ func TestRenderUsesCameraAndCompiledSTL(t *testing.T) {
 		t.Fatal("unknown angle accepted")
 	}
 }
+
+func TestManifoldBackendWhenAvailable(t *testing.T) {
+	dir := t.TempDir()
+	f := &runner.Fake{OnRun: func(name string, args []string) ([]byte, error) {
+		if args[0] == "--backend=manifold" {
+			return []byte("OpenSCAD version 2026.09.30"), nil
+		}
+		return nil, os.WriteFile(outPath(args), mesh.Cube(1, 1, 1), 0o644)
+	}}
+	c := scad.New(f, "")
+	if got := c.UseBestBackend(context.Background()); got != "manifold" {
+		t.Fatalf("backend %q", got)
+	}
+	c.Compile(context.Background(), "m.scad", filepath.Join(dir, "m.stl"), nil)
+	if line := strings.Join(f.Calls[len(f.Calls)-1], " "); !strings.Contains(line, "--backend=manifold") {
+		t.Fatalf("args: %s", line)
+	}
+
+	old := &runner.Fake{OnRun: func(name string, args []string) ([]byte, error) {
+		if args[0] == "--backend=manifold" {
+			return nil, errors.New("openscad failed: exit status 1\nunrecognised option '--backend=manifold'")
+		}
+		return nil, os.WriteFile(outPath(args), mesh.Cube(1, 1, 1), 0o644)
+	}}
+	c2 := scad.New(old, "")
+	if got := c2.UseBestBackend(context.Background()); got != "" {
+		t.Fatalf("2021 got backend %q", got)
+	}
+	c2.Compile(context.Background(), "m.scad", filepath.Join(dir, "m.stl"), nil)
+	if line := strings.Join(old.Calls[len(old.Calls)-1], " "); strings.Contains(line, "--backend") {
+		t.Fatalf("args: %s", line)
+	}
+}

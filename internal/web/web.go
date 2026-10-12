@@ -2,6 +2,7 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -385,7 +386,11 @@ func (s *Server) postParams(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	res, err := s.svc.Compile(r.Context(), name, "", body.Params)
+	// A reload or a closed tab must not kill a compile halfway: it finishes and the viewer
+	// picks up the new version from the event stream.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Minute)
+	defer cancel()
+	res, err := s.svc.Compile(ctx, name, "", body.Params)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, err)
 		return
