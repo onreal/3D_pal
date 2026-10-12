@@ -39,6 +39,38 @@ type Estimate struct {
 	JobPath     string    `json:"-"` // the sliced file, reused at approval
 }
 
+// Line is the estimate in one sentence, for the agent.
+func (e Estimate) Line() string {
+	if e.Status == "failed" {
+		return "failed: " + e.Error
+	}
+	if e.Status == "running" {
+		return "still slicing"
+	}
+	h, m := e.Minutes/60, e.Minutes%60
+	t := fmt.Sprintf("%d min", m)
+	if h > 0 {
+		t = fmt.Sprintf("%d h %d min", h, m)
+	}
+	s := fmt.Sprintf("%s, %.1f g", t, e.Grams)
+	if e.Filament != "" {
+		s += " " + e.Filament
+	}
+	s += fmt.Sprintf(" (%.2f m), %d layers", e.Metres, e.Layers)
+	if e.LayerHeight > 0 {
+		s += fmt.Sprintf(" at %g mm", e.LayerHeight)
+	}
+	if e.Supports {
+		s += ", with supports"
+	} else {
+		s += ", no supports needed"
+	}
+	if e.Cost > 0 {
+		s += fmt.Sprintf(", cost %.2f %s", e.Cost, e.Currency)
+	}
+	return s
+}
+
 // Input is everything that changes a slice. Equal inputs give the cached result.
 type Input struct {
 	Project       string
