@@ -150,16 +150,30 @@ cmd_open() {
 }
 
 # mcp: started by the MCP client for each session. stdout is the protocol, so nothing
-# else may print there. The standalone viewer is stopped first so the port is free; the
-# session's container serves the viewer itself and is removed when the session ends.
+# else may print there. Only one session can serve the port, so the standalone viewer and
+# any container left by an earlier session are removed first. A client may end a session
+# by killing this script instead of closing stdin; docker run would then leave the
+# container running, so the container is named and removed when the script is stopped.
 cmd_mcp() {
   need_docker; need_image; prepare
   if viewer_running; then
     docker stop "$VIEWER" >/dev/null 2>&1 || true
     say "printpipe: stopped the standalone viewer; this session serves $URL"
   fi
+  local stale; stale=$(docker ps -q --filter "label=$LABEL=mcp")
+  if [[ -n "$stale" ]]; then
+    docker rm -f $stale >/dev/null 2>&1 || true
+    say "printpipe: removed a container left by an earlier session"
+  fi
   set_run_args
-  exec docker run -i --label "$LABEL=mcp" "${RUN_ARGS[@]}" "$IMAGE"
+  local name="print-pipeline-mcp-$$"
+  # shellcheck disable=SC2064
+  trap "docker rm -f $name >/dev/null 2>&1 || true" EXIT
+  trap 'exit 143' TERM INT HUP
+  # Background with stdin passed explicitly, so the traps run while docker is running.
+  docker run -i --name "$name" --label "$LABEL=mcp" "${RUN_ARGS[@]}" "$IMAGE" <&0 &
+  local pid=$!
+  wait "$pid"
 }
 
 desktop_config_path() {
