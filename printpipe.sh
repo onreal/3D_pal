@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# printpipe.sh: bring the print pipeline container up and down, and connect it to an agent.
+# printpipe.sh: run the print pipeline server and connect agents to it.
+#
+# One long-running container serves the viewer (http://localhost:8080) and MCP over
+# HTTP (http://localhost:8080/mcp). Any number of agent sessions connect to it at once;
+# the viewer lists them and shows which client holds each one.
 #
 #   ./printpipe.sh build            build the image
-#   ./printpipe.sh up [--demo]      run the viewer and settings page on their own (no agent)
-#   ./printpipe.sh down             stop the viewer (and, with --all, any agent session's container)
+#   ./printpipe.sh up [--demo]      start the server (restarts with Docker; recreated after a build)
+#   ./printpipe.sh down             stop and remove the server
 #   ./printpipe.sh restart          down, then up
-#   ./printpipe.sh status           containers, health, printers
+#   ./printpipe.sh status           server health, open agent sessions, printers
 #   ./printpipe.sh logs [-f]        the server log from the data volume
 #   ./printpipe.sh open             open the viewer in the browser
-#   ./printpipe.sh mcp-add          register with Claude Code and print the Claude Desktop config
+#   ./printpipe.sh mcp-add [scope]  register with Claude Code over HTTP; print the Claude Desktop config
 #   ./printpipe.sh mcp-remove       unregister from Claude Code
-#   ./printpipe.sh mcp              what the MCP client runs: frees the port, then serves MCP on stdio
+#   ./printpipe.sh mcp              for stdio-only clients: starts the server if needed and bridges stdio to /mcp
 #
 # Settings come from the environment (defaults in brackets):
 #   PRINTPIPE_IMAGE  [print-pipeline:latest]   PRINTPIPE_PORT  [8080]
@@ -27,9 +31,11 @@ PORT=${PRINTPIPE_PORT:-8080}
 WORK=${PRINTPIPE_WORK:-$HOME/prints}
 VOLUME=${PRINTPIPE_VOLUME:-print-data}
 DEMO=${PRINTPIPE_DEMO:-0}
-VIEWER=print-pipeline-viewer
+SERVER=${PRINTPIPE_CONTAINER:-print-pipeline}
+LEGACY=print-pipeline-viewer
 LABEL=org.printpipe.role
 URL="http://localhost:$PORT"
+MCP_URL="http://127.0.0.1:$PORT/mcp"
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SELF="$HERE/$(basename "${BASH_SOURCE[0]}")"
 
@@ -51,94 +57,112 @@ prepare() {
   docker volume inspect "$VOLUME" >/dev/null 2>&1 || docker volume create "$VOLUME" >/dev/null
 }
 
-# set_run_args: the shared docker run arguments (ports, volumes, viewer URL, demo mode).
-# A plain array, since macOS ships bash 3.2 (no mapfile).
-set_run_args() {
-  RUN_ARGS=(--rm --platform linux/amd64
-    -p "127.0.0.1:$PORT:8080"
-    -v "$VOLUME:/data" -v "$WORK:/work"
-    -e "PRINTPIPE_VIEWER_URL=$URL")
-  if [[ "$DEMO" == 1 ]]; then RUN_ARGS+=(-e PRINTPIPE_DEMO=1); fi
-}
+server_running() { [[ "$(docker container inspect -f '{{.State.Running}}' "$SERVER" 2>/dev/null)" == "true" ]]; }
+server_exists() { docker container inspect "$SERVER" >/dev/null 2>&1; }
 
-viewer_running() { [[ -n "$(docker ps -q --filter "name=^${VIEWER}$")" ]]; }
-
-port_owner() {
-  docker ps --filter "publish=$PORT" --format '{{.Names}}' | head -n1
-}
+healthy() { curl -fsS "$URL/api/health" >/dev/null 2>&1; }
 
 wait_healthy() {
   local i
   for i in $(seq 1 60); do
-    if curl -fsS "$URL/api/health" >/dev/null 2>&1; then return 0; fi
+    if healthy; then return 0; fi
     sleep 0.5
   done
   return 1
+}
+
+# Containers from the earlier one-container-per-session setup.
+remove_legacy() {
+  docker rm -f "$LEGACY" >/dev/null 2>&1 || true
+  local old; old=$(docker ps -aq --filter "label=$LABEL=mcp")
+  if [[ -n "$old" ]]; then docker rm -f $old >/dev/null 2>&1 || true; fi
 }
 
 cmd_build() {
   need_docker
   say "Building $IMAGE (linux/amd64; the first build downloads Bambu Studio, about 220 MB)…"
   docker build --platform linux/amd64 -t "$IMAGE" --build-arg "VERSION=$(git -C "$HERE" describe --always --dirty 2>/dev/null || echo dev)" "$HERE"
-  say "Built $IMAGE."
+  say "Built $IMAGE. Run ./printpipe.sh up (it recreates a running server on the new image)."
 }
 
 cmd_up() {
   if [[ "${1:-}" == "--demo" ]]; then DEMO=1; fi
-  need_docker; need_image; prepare
-  if viewer_running; then say "Already up: $URL"; return 0; fi
-  local owner; owner=$(port_owner)
-  if [[ -n "$owner" ]]; then die "port $PORT is used by container $owner (an agent session?). End that session, or set PRINTPIPE_PORT."; fi
-  set_run_args
-  # No -i: without an agent on stdin the server runs the viewer and settings page only.
-  docker run -d --name "$VIEWER" --label "$LABEL=viewer" "${RUN_ARGS[@]}" "$IMAGE" >/dev/null
+  need_docker; need_image; prepare; remove_legacy
+  if server_exists; then
+    local want have
+    want=$(docker image inspect -f '{{.Id}}' "$IMAGE")
+    have=$(docker container inspect -f '{{.Image}}' "$SERVER")
+    if [[ "$want" != "$have" ]]; then
+      say "The image changed; recreating the server…"
+      docker rm -f "$SERVER" >/dev/null
+    elif server_running; then
+      if healthy; then say "Up: $URL (MCP: $MCP_URL)"; return 0; fi
+    else
+      docker start "$SERVER" >/dev/null
+    fi
+  fi
+  if ! server_exists; then
+    local owner; owner=$(docker ps --filter "publish=$PORT" --format '{{.Names}}' | head -n1)
+    if [[ -n "$owner" ]]; then die "port $PORT is used by container $owner; stop it or set PRINTPIPE_PORT"; fi
+    local args=(-d --name "$SERVER" --label "$LABEL=server" --restart unless-stopped --platform linux/amd64
+      -p "127.0.0.1:$PORT:8080" -v "$VOLUME:/data" -v "$WORK:/work" -e "PRINTPIPE_VIEWER_URL=$URL")
+    if [[ "$DEMO" == 1 ]]; then args+=(-e PRINTPIPE_DEMO=1); fi
+    docker run "${args[@]}" "$IMAGE" >/dev/null
+  fi
   if wait_healthy; then
-    say "Up: $URL (settings: $URL/settings, workspace: $WORK)"
+    say "Up: $URL (MCP: $MCP_URL, workspace: $WORK)"
   else
-    docker logs "$VIEWER" 2>&1 | tail -20 >&2 || true
-    die "the viewer did not come up; see ./printpipe.sh logs"
+    docker logs "$SERVER" 2>&1 | tail -20 >&2 || true
+    die "the server did not come up; see ./printpipe.sh logs"
   fi
 }
 
 cmd_down() {
   need_docker
-  if viewer_running; then
-    docker stop "$VIEWER" >/dev/null
-    say "Viewer stopped."
+  if server_exists; then
+    docker rm -f "$SERVER" >/dev/null
+    say "Server stopped. Agent sessions are disconnected until ./printpipe.sh up."
   else
-    say "Viewer is not running."
+    say "Server is not running."
   fi
-  if [[ "${1:-}" == "--all" ]]; then
-    local ids; ids=$(docker ps -q --filter "label=$LABEL=mcp")
-    if [[ -n "$ids" ]]; then
-      docker stop $ids >/dev/null
-      say "Stopped agent session containers: $(echo "$ids" | wc -l | tr -d ' ')."
-    fi
-  fi
+  remove_legacy
 }
 
 cmd_status() {
   need_docker
-  local rows; rows=$(docker ps --filter "label=$LABEL" --format '{{.Names}}\t{{.Label "'"$LABEL"'"}}\t{{.Status}}\t{{.Ports}}')
-  if [[ -z "$rows" ]]; then
-    say "Not running. Start the viewer with ./printpipe.sh up, or start an agent session."
+  if server_running; then
+    say "Server: $(docker container inspect -f '{{.State.Status}} since {{.State.StartedAt}}' "$SERVER")"
   else
-    printf 'NAME\tROLE\tSTATUS\tPORTS\n%s\n' "$rows" | column -t -s $'\t' >&2
+    say "Server: not running (./printpipe.sh up)"
   fi
-  if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
-    say "Viewer: $URL (healthy)"
+  if healthy; then
+    say "Viewer: $URL    MCP: $MCP_URL"
+    local sessions
+    sessions=$(curl -fsS "$URL/api/sessions" 2>/dev/null | tr '{' '\n' | grep '"open":true' || true)
+    if [[ -z "$sessions" ]]; then
+      say "Sessions: none open"
+    else
+      say "Sessions:"
+      printf '%s\n' "$sessions" | while IFS= read -r s; do
+        local client transport calls project
+        client=$(printf '%s' "$s" | sed -nE 's/.*"client":"([^"]*)".*/\1/p')
+        transport=$(printf '%s' "$s" | sed -nE 's/.*"transport":"([^"]*)".*/\1/p')
+        calls=$(printf '%s' "$s" | sed -nE 's/.*"calls":([0-9]+).*/\1/p')
+        project=$(printf '%s' "$s" | sed -nE 's/.*"project":"([^"]*)".*/\1/p')
+        say "  $client via $transport, $calls calls${project:+, project $project}"
+      done
+    fi
     curl -fsS "$URL/api/printers?status=0" 2>/dev/null |
       grep -o '"name":"[^"]*","kind":"[^"]*","default":[a-z]*' |
-      sed -E 's/"name":"([^"]*)","kind":"([^"]*)","default":(.*)/  printer: \1 (\2)\3/; s/true$/, default/; s/false$//' >&2 || true
+      sed -E 's/"name":"([^"]*)","kind":"([^"]*)","default":(.*)/Printer: \1 (\2)\3/; s/true$/, default/; s/false$//' >&2 || true
   fi
-  docker image inspect "$IMAGE" >/dev/null 2>&1 && say "Image: $IMAGE" || say "Image: $IMAGE not built (./printpipe.sh build)"
+  if docker image inspect "$IMAGE" >/dev/null 2>&1; then say "Image: $IMAGE"; else say "Image: $IMAGE not built (./printpipe.sh build)"; fi
 }
 
 cmd_logs() {
-  need_docker
+  need_docker; need_image
   local follow=""
   if [[ "${1:-}" == "-f" ]]; then follow="-f"; fi
-  need_image
   docker run --rm --platform linux/amd64 --entrypoint tail -v "$VOLUME:/data:ro" "$IMAGE" -n 200 $follow /data/logs/printpipe.log
 }
 
@@ -149,31 +173,19 @@ cmd_open() {
   else say "Open $URL in your browser."; fi
 }
 
-# mcp: started by the MCP client for each session. stdout is the protocol, so nothing
-# else may print there. Only one session can serve the port, so the standalone viewer and
-# any container left by an earlier session are removed first. A client may end a session
-# by killing this script instead of closing stdin; docker run would then leave the
-# container running, so the container is named and removed when the script is stopped.
+# mcp: for MCP clients that only speak stdio (Claude Desktop). stdout is the protocol, so
+# nothing else may print there. The bridge runs inside the server container and relays to
+# /mcp, so this session joins the same server as every other one. A client may stop this
+# script with a signal instead of closing stdin; the bridge is then stopped explicitly.
 cmd_mcp() {
-  need_docker; need_image; prepare
-  if viewer_running; then
-    docker stop "$VIEWER" >/dev/null 2>&1 || true
-    say "printpipe: stopped the standalone viewer; this session serves $URL"
-  fi
-  local stale; stale=$(docker ps -q --filter "label=$LABEL=mcp")
-  if [[ -n "$stale" ]]; then
-    docker rm -f $stale >/dev/null 2>&1 || true
-    say "printpipe: removed a container left by an earlier session"
-  fi
-  set_run_args
-  local name="print-pipeline-mcp-$$"
+  need_docker; need_image
+  if ! server_running || ! healthy; then cmd_up; fi
+  local pidfile="/tmp/printpipe-bridge-$$.pid"
   # shellcheck disable=SC2064
-  trap "docker rm -f $name >/dev/null 2>&1 || true" EXIT
+  trap "docker exec $SERVER sh -c 'kill \$(cat $pidfile) 2>/dev/null; rm -f $pidfile' >/dev/null 2>&1 || true" EXIT
   trap 'exit 143' TERM INT HUP
-  # Background with stdin passed explicitly, so the traps run while docker is running.
-  docker run -i --name "$name" --label "$LABEL=mcp" "${RUN_ARGS[@]}" "$IMAGE" <&0 &
-  local pid=$!
-  wait "$pid"
+  docker exec -i "$SERVER" printpipe bridge --pidfile "$pidfile" <&0 &
+  wait $!
 }
 
 desktop_config_path() {
@@ -184,7 +196,7 @@ desktop_config_path() {
   esac
 }
 
-# Settings that differ from the defaults, as NAME=value, so the session gets them too.
+# Settings that differ from the defaults, as NAME=value, for the stdio bridge config.
 custom_env() {
   [[ "$IMAGE" != "print-pipeline:latest" ]] && echo "PRINTPIPE_IMAGE=$IMAGE"
   [[ "$PORT" != "8080" ]] && echo "PRINTPIPE_PORT=$PORT"
@@ -196,19 +208,20 @@ custom_env() {
 
 cmd_mcp_add() {
   local scope=${1:-user}
-  local envflags=() line
-  while IFS= read -r line; do [[ -n "$line" ]] && envflags+=(-e "$line"); done < <(custom_env)
+  need_docker; need_image
+  cmd_up
   if command -v claude >/dev/null 2>&1; then
     claude mcp remove print-pipeline -s "$scope" >/dev/null 2>&1 || true
-    claude mcp add print-pipeline -s "$scope" ${envflags[@]+"${envflags[@]}"} -- "$SELF" mcp
-    say "Registered with Claude Code ($scope scope). Run /mcp in a session to check it."
+    claude mcp add --transport http print-pipeline -s "$scope" "$MCP_URL"
+    say "Registered with Claude Code over HTTP ($scope scope): $MCP_URL"
+    say "Run /mcp in a session to check it; the viewer at $URL lists every connected session."
   else
     say "Claude Code (claude) is not installed; skipping. Its command would be:"
-    say "  claude mcp add print-pipeline -s $scope ${envflags[*]:-}-- \"$SELF\" mcp"
+    say "  claude mcp add --transport http print-pipeline -s $scope $MCP_URL"
   fi
   say ""
-  say "Claude Desktop: add this to $(desktop_config_path), then restart Claude Desktop:"
-  local env_json="" sep=""
+  say "Claude Desktop (stdio, bridged into the same server): add this to $(desktop_config_path), then restart it:"
+  local env_json="" sep="" line
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     env_json+="$sep        \"${line%%=*}\": \"${line#*=}\""

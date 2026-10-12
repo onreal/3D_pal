@@ -1,7 +1,9 @@
 //go:build e2e
 
-// Package e2e drives the real Docker image over MCP, the way an agent does: real
-// OpenSCAD and Bambu Studio inside the container, and the simulated printer.
+// Package e2e drives the real Docker image over MCP, the way agents do: one long-running
+// server container, a Claude Code-like client over HTTP and a Claude Desktop-like client
+// through the stdio bridge at the same time, real OpenSCAD and Bambu Studio, and the
+// simulated printer.
 //
 //	docker build -t print-pipeline:dev .
 //	go test -tags e2e -v ./e2e/
@@ -97,17 +99,16 @@ func structured(t *testing.T, res *mcp.CallToolResult, v any) {
 	}
 }
 
+const container = "printpipe-e2e"
+
 func TestPromptToPrintInDocker(t *testing.T) {
 	data, work := t.TempDir(), t.TempDir()
-	cmd := exec.Command("docker", "run", "-i", "--rm", "--platform", "linux/amd64",
-		"-p", "127.0.0.1:"+port+":8080", "-v", data+":/data", "-v", work+":/work", image())
-	cmd.Stderr = os.Stderr
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "v0"}, nil).
-		Connect(context.Background(), &mcp.CommandTransport{Command: cmd}, nil)
-	if err != nil {
-		t.Fatal(err)
+	exec.Command("docker", "rm", "-f", container).Run()
+	if out, err := exec.Command("docker", "run", "-d", "--name", container, "--platform", "linux/amd64",
+		"-p", "127.0.0.1:"+port+":8080", "-v", data+":/data", "-v", work+":/work", image()).CombinedOutput(); err != nil {
+		t.Fatalf("start server: %v %s", err, out)
 	}
-	defer cs.Close()
+	t.Cleanup(func() { exec.Command("docker", "rm", "-f", container).Run() })
 
 	// The viewer comes up with the MCP session.
 	deadline := time.Now().Add(60 * time.Second)
@@ -123,6 +124,21 @@ func TestPromptToPrintInDocker(t *testing.T) {
 	}
 	if page := httpDo(t, "GET", "/", nil, ""); !bytes.Contains(page, []byte("<div id=\"app\">")) {
 		t.Fatalf("viewer page: %.200s", page)
+	}
+
+	// Two agents at once: Claude Code over HTTP, Claude Desktop through the stdio bridge.
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "claude-code", Version: "2.1.0"}, nil).
+		Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: base + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	bridgeCmd := exec.Command("docker", "exec", "-i", container, "printpipe", "bridge")
+	bridgeCmd.Stderr = os.Stderr
+	desk, err := mcp.NewClient(&mcp.Implementation{Name: "claude-desktop", Version: "0.14.2"}, nil).
+		Connect(context.Background(), &mcp.CommandTransport{Command: bridgeCmd}, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// Settings: real Bambu Studio slicing with A1 profiles, the simulated printer, a filament price.
@@ -210,6 +226,51 @@ func TestPromptToPrintInDocker(t *testing.T) {
 	res, text = call(t, cs, "print_job", map[string]any{"job_id": approval.JobID})
 	if !res.IsError || !strings.Contains(text, "already sent") {
 		t.Fatalf("second print: %s", text)
+	}
+
+	// The desktop session works on its own project meanwhile.
+	if res, text := call(t, desk, "compile_model", map[string]any{"project": "desk-part", "scad_code": "size = 10; // [5:50]\ncube(size);\n"}); res.IsError {
+		t.Fatalf("desktop compile: %s", text)
+	}
+	var list []struct {
+		ID, Client, Transport, Project string
+		Calls                          int
+		Open                           bool
+	}
+	json.Unmarshal(httpDo(t, "GET", "/api/sessions", nil, ""), &list)
+	byClient := map[string]int{}
+	for i, s := range list {
+		byClient[s.Client] = i
+	}
+	code, desktop := list[byClient["claude-code"]], list[byClient["claude-desktop"]]
+	if len(list) != 2 || !code.Open || code.Transport != "http" || code.Calls < 7 || code.Project != "test-cube" ||
+		!desktop.Open || desktop.Transport != "bridge" || desktop.Calls != 1 || desktop.Project != "desk-part" {
+		t.Fatalf("sessions: %+v", list)
+	}
+	var detail struct {
+		Runs []struct{ Client, Tool string }
+	}
+	json.Unmarshal(httpDo(t, "GET", "/api/sessions/"+desktop.ID, nil, ""), &detail)
+	if len(detail.Runs) != 1 || detail.Runs[0].Client != "claude-desktop" {
+		t.Fatalf("desktop runs: %+v", detail.Runs)
+	}
+	desk.Close()
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		json.Unmarshal(httpDo(t, "GET", "/api/sessions", nil, ""), &list)
+		closed := false
+		for _, s := range list {
+			if s.Client == "claude-desktop" && !s.Open {
+				closed = true
+			}
+		}
+		if closed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("bridged session not closed: %+v", list)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	for _, f := range []string{"model.scad", "model.stl", "preview.png", "job.gcode.3mf", "params.json", "run.log"} {
