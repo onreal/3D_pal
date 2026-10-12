@@ -186,3 +186,77 @@ func TestPrinterLookup(t *testing.T) {
 		t.Fatal("unknown id found")
 	}
 }
+
+func TestValidationOfEverySection(t *testing.T) {
+	s := config.Defaults()
+	s.Slicer.LayerHeight = 0.9
+	s.Slicer.SupportType = "glue"
+	s.Viewer.OverhangAngle = 95
+	s.Viewer.DisplayMode = "hologram"
+	s.Pipeline.PreviewAngles = []string{"underneath"}
+	s.Pipeline.Workspace = "relative"
+	s.Pipeline.LogLevel = "loud"
+	s.Currency = "euros"
+	s.Profiles = []config.Profile{{Name: "../x.json", Kind: "gizmo", PricePerKg: -1}, {Name: "a.json", Kind: "filament"}, {Name: "a.json", Kind: "filament"}}
+	s.Printers = []config.Printer{{ID: "Bad ID", Name: " ", Kind: "fake", Default: true, Config: map[string]string{"print_seconds": "soon", "slicer": "magic"},
+		Profiles: map[string]string{"machine": "missing.json", "filament": "a.json", "process": "a.json"}}}
+	err := s.Validate()
+	for _, want := range []string{"layer height", "support type", "overhang angle", "display mode", "preview angle", "absolute path", "log level", "currency",
+		"name must end in .json", "kind must be", "negative", "listed twice", "ID must be", "name is required", "must be a number", "must be one of", "not uploaded", "not process"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	s = config.Defaults()
+	s.Pipeline.PreviewAngles = nil
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "at least one preview angle") {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestSavedProfileMustExistOnDisk(t *testing.T) {
+	st := newStore(t)
+	s := config.Defaults()
+	s.Profiles = []config.Profile{{Name: "ghost.json", Kind: "machine"}}
+	if err := st.Save(s); err == nil || !strings.Contains(err.Error(), "file not found") {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.HasSuffix(st.ProfilesDir(), "profiles") {
+		t.Fatal(st.ProfilesDir())
+	}
+}
+
+func TestReuploadKeepsPriceAndOnSaveFires(t *testing.T) {
+	st := newStore(t)
+	saved := 0
+	st.OnSave = func(config.Settings) { saved++ }
+	st.SaveProfile("filament", "pla.json", []byte(`{"v":1}`))
+	s, _ := st.Load()
+	s.Profiles[0].PricePerKg = 22
+	st.Save(s)
+	st.SaveProfile("filament", "pla.json", []byte(`{"v":2}`))
+	s, _ = st.Load()
+	if len(s.Profiles) != 1 || s.Profiles[0].PricePerKg != 22 || saved != 3 {
+		t.Fatalf("%+v saved=%d", s.Profiles, saved)
+	}
+	if _, err := st.SaveProfile("gizmo", "x.json", []byte(`{}`)); err == nil {
+		t.Fatal("unknown kind accepted")
+	}
+}
+
+func TestImportRejectsBrokenBundles(t *testing.T) {
+	st := newStore(t)
+	b := config.Bundle{Format: config.BundleFormat, Settings: config.Defaults(), Files: map[string]string{}}
+	b.Settings.Profiles = []config.Profile{{Name: "pla.json", Kind: "filament"}}
+	if err := st.Import(b); err == nil || !strings.Contains(err.Error(), "file is missing") {
+		t.Fatalf("got %v", err)
+	}
+	b.Files["pla.json"] = "not json"
+	if err := st.Import(b); err == nil || !strings.Contains(err.Error(), "not JSON") {
+		t.Fatalf("got %v", err)
+	}
+	b.Settings.Currency = "x"
+	if err := st.Import(b); err == nil {
+		t.Fatal("invalid settings imported")
+	}
+}

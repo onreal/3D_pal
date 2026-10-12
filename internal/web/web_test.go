@@ -352,3 +352,90 @@ func TestFrontendRoutes(t *testing.T) {
 		t.Fatalf("unknown API path: %d", resp.StatusCode)
 	}
 }
+
+func TestReadEndpoints(t *testing.T) {
+	f := setup(t)
+	f.compile(t)
+	a, _ := f.env.Svc.RequestApproval(context.Background(), "cube", 0, "", zeroOverrides)
+	cases := []struct {
+		path, want string
+		code       int
+	}{
+		{"/api/projects", `"name":"cube"`, 200},
+		{"/api/runs", `"tool":"request_approval"`, 200},
+		{"/api/jobs/" + a.Job.ID, `"id":"` + a.Job.ID + `"`, 200},
+		{"/api/jobs/zz", "8 hex", 400},
+		{"/api/projects/cube/job.gcode.3mf", "", 200},
+		{"/api/projects/cube/job.gcode.3mf?job=bad", "8 hex", 400},
+		{"/api/projects/cube/job.gcode.3mf?job=deadbeef", "no such job", 404},
+		{"/api/projects/cube/model.scad?v=1", "cube(size)", 200},
+		{"/api/projects/cube/model.stl?v=0x", "positive number", 400},
+		{"/api/projects/cube/model.stl?v=9", "no version 9", 404},
+		{"/api/projects/cube/params?v=1", `"name":"size"`, 200},
+		{"/api/projects/nope/params", "no compiled versions", 404},
+		{"/api/projects/cube/versions/9/job.gcode.3mf", "no version 9", 404},
+		{"/api/projects/cube/versions/1/estimate?printer=nope", "no printer", 404},
+		{"/api/health", "ok", 200},
+	}
+	for _, c := range cases {
+		resp, body := f.do(t, "GET", c.path, nil, nil)
+		if resp.StatusCode != c.code || !strings.Contains(string(body), c.want) {
+			t.Errorf("%s: %d %.120s", c.path, resp.StatusCode, body)
+		}
+	}
+}
+
+func TestWriteEndpointErrors(t *testing.T) {
+	f := setup(t)
+	f.compile(t)
+	cases := []struct {
+		method, path, body, want string
+		code                     int
+	}{
+		{"PUT", "/api/settings", "not json", "not valid JSON", 400},
+		{"POST", "/api/settings/import", "{", "not valid JSON", 400},
+		{"POST", "/api/projects/cube/params", "[", "not valid JSON", 400},
+		{"POST", "/api/projects/cube/versions/9/restore", "", "no version 9", 404},
+		{"POST", "/api/projects/cube/versions/1/estimate", "{bad", "not valid JSON", 400},
+		{"POST", "/api/projects/nope/versions/1/estimate", "", "no version 1", 404},
+		{"POST", "/api/printers/BAD!/test", "", "bad printer ID", 400},
+		{"POST", "/api/printers/BAD!/cancel", "", "bad printer ID", 400},
+		{"POST", "/api/printers/nope/test", "", "no printer", 404},
+		{"POST", "/api/profiles/gizmo?name=x.json", "{}", "kind", 400},
+	}
+	for _, c := range cases {
+		var body any
+		if c.body != "" {
+			body = []byte(c.body)
+		}
+		resp, out := f.do(t, c.method, c.path, body, nil)
+		if resp.StatusCode != c.code || !strings.Contains(string(out), c.want) {
+			t.Errorf("%s %s: %d %.120s", c.method, c.path, resp.StatusCode, out)
+		}
+	}
+	if resp, body := f.do(t, "POST", "/api/printers/sim/cancel", nil, nil); resp.StatusCode != 200 {
+		t.Fatalf("cancel: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestPrintedJobCannotBeApprovedAgain(t *testing.T) {
+	f := setup(t)
+	f.compile(t)
+	a, _ := f.env.Svc.RequestApproval(context.Background(), "cube", 0, "", zeroOverrides)
+	f.env.Svc.Approve(a.Job.ID)
+	f.env.Svc.Print(context.Background(), a.Job.ID)
+	if resp, body := f.do(t, "POST", "/api/jobs/"+a.Job.ID+"/approve", nil, nil); resp.StatusCode != 409 {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+}
+
+func TestFrontendNotBuilt(t *testing.T) {
+	env := pipelinetest.New(t)
+	srv := httptest.NewServer(web.Handler(env.Svc, env.Config, events.NewHub(), fstest.MapFS{}))
+	defer srv.Close()
+	resp, _ := http.Get(srv.URL + "/")
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "not built") {
+		t.Fatalf("%s", body)
+	}
+}

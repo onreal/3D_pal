@@ -55,3 +55,18 @@ func TestHas(t *testing.T) {
 	}
 	_ = context.Background()
 }
+
+func TestDriversAreSorted(t *testing.T) {
+	printer.Register(printer.Driver{Kind: "zz-last", New: func(map[string]string, printer.Deps) (printer.Printer, error) { return nil, nil }})
+	printer.Register(printer.Driver{Kind: "aa-first", New: func(map[string]string, printer.Deps) (printer.Printer, error) { return nil, nil }})
+	ds := printer.Drivers()
+	if len(ds) < 2 || ds[0].Kind != "aa-first" || ds[len(ds)-1].Kind != "zz-last" {
+		t.Fatalf("%v", ds)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a driver without a constructor must panic")
+		}
+	}()
+	printer.Register(printer.Driver{Kind: "broken"})
+}

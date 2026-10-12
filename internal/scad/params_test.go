@@ -78,3 +78,40 @@ func TestDefines(t *testing.T) {
 		t.Fatal("bad number accepted")
 	}
 }
+
+func TestDefineTypesAndValues(t *testing.T) {
+	num := scad.Param{Name: "n", Type: "number"}
+	boolean := scad.Param{Name: "b", Type: "boolean"}
+	vec := scad.Param{Name: "v", Type: "vector"}
+	str := scad.Param{Name: "s", Type: "string"}
+	ok := map[string]struct {
+		p scad.Param
+		v any
+	}{
+		"n=3":       {num, 3},
+		"n=2.5":     {num, "2.5"},
+		"n=7":       {num, int64(7)},
+		"n=1.5":     {num, float32(1.5)},
+		"b=true":    {boolean, "true"},
+		"v=[1,2.5]": {vec, []float64{1, 2.5}},
+		`s="x"`:     {str, "x"},
+	}
+	for want, c := range ok {
+		got, err := scad.Define(c.p, c.v)
+		if err != nil || got != want {
+			t.Errorf("%v → %q %v, want %q", c.v, got, err, want)
+		}
+	}
+	for _, c := range []struct {
+		p scad.Param
+		v any
+	}{{num, true}, {boolean, 1}, {vec, "x"}, {vec, []any{"a"}}, {str, 1}, {scad.Param{Name: "q", Type: "weird"}, 1}} {
+		if _, err := scad.Define(c.p, c.v); err == nil {
+			t.Errorf("%s accepted %v", c.p.Type, c.v)
+		}
+	}
+	vals := scad.Values([]scad.Param{{Name: "a", Value: 1.0}, {Name: "b", Value: 2.0}}, map[string]any{"b": 5.0})
+	if vals["a"] != 1.0 || vals["b"] != 5.0 {
+		t.Fatalf("%v", vals)
+	}
+}

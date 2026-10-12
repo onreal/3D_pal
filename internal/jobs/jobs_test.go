@@ -108,3 +108,24 @@ func TestJobIsSentOnlyOnce(t *testing.T) {
 		t.Fatalf("printed job still pending: %+v", p)
 	}
 }
+
+func TestPendingAndHash(t *testing.T) {
+	store, dir := newStore(t)
+	file := writeFile(t, dir, "job.gcode.3mf", "v1")
+	a, _ := store.Request("cube", "a1", file)
+	b, _ := store.Request("cube", "a1", file)
+	store.Request("other", "a1", file)
+	p, err := store.Pending("cube")
+	if err != nil || len(p) != 2 || (p[0].ID != a.ID && p[0].ID != b.ID) {
+		t.Fatalf("%+v %v", p, err)
+	}
+	if h, _ := jobs.HashFile(file); h != a.FileSHA256 || len(h) != 64 {
+		t.Fatalf("hash %s", h)
+	}
+	if _, err := store.Request("cube", "a1", filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("missing file accepted")
+	}
+	if err := store.CheckPrintable("deadbeef", file); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("got %v", err)
+	}
+}

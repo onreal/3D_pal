@@ -147,9 +147,9 @@ func status(err error) int {
 	switch {
 	case errors.As(err, &ve), errors.Is(err, project.ErrBadName), errors.Is(err, pipeline.ErrTooBig):
 		return http.StatusBadRequest
-	case errors.Is(err, project.ErrNotFound), errors.Is(err, jobs.ErrNotFound):
+	case errors.Is(err, project.ErrNotFound), errors.Is(err, jobs.ErrNotFound), errors.Is(err, config.ErrUnknownPrinter):
 		return http.StatusNotFound
-	case errors.Is(err, jobs.ErrPrinted), errors.Is(err, printer.ErrBusy):
+	case errors.Is(err, jobs.ErrPrinted), errors.Is(err, printer.ErrBusy), errors.Is(err, config.ErrNoPrinter), errors.Is(err, jobs.ErrNotApproved), errors.Is(err, jobs.ErrFileChanged):
 		return http.StatusConflict
 	case errors.Is(err, printer.ErrUnreachable), errors.Is(err, printer.ErrAuth), errors.Is(err, printer.ErrNoStorage):
 		return http.StatusBadGateway

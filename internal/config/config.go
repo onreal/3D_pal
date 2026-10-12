@@ -97,6 +97,8 @@ func (s Settings) Default() (Printer, bool) {
 	return Printer{}, false
 }
 
+var ErrUnknownPrinter = errors.New("unknown printer")
+
 var ErrNoPrinter = errors.New("no printer configured: add one on the settings page (http://localhost:8080/settings)")
 
 // Printer finds a printer by ID; an empty ID means the default printer.
@@ -113,7 +115,7 @@ func (s Settings) Printer(id string) (Printer, error) {
 			return p, nil
 		}
 	}
-	return Printer{}, fmt.Errorf("no printer with ID %q; list_printers shows the configured ones", id)
+	return Printer{}, fmt.Errorf("no printer with ID %q; list_printers shows the configured ones: %w", id, ErrUnknownPrinter)
 }
 
 func (s Settings) Profile(name string) (Profile, bool) {

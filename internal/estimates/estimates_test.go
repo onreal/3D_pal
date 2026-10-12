@@ -135,3 +135,24 @@ func TestFailedEstimateIsRetried(t *testing.T) {
 		t.Fatalf("%+v %v", e, err)
 	}
 }
+
+func TestLine(t *testing.T) {
+	e := estimates.Estimate{Status: "done", Minutes: 125, Grams: 7.4, Filament: "PLA", Metres: 2.48, Layers: 100, LayerHeight: 0.2, Supports: true, Cost: 0.19, Currency: "EUR"}
+	if got := e.Line(); got != "2 h 5 min, 7.4 g PLA (2.48 m), 100 layers at 0.2 mm, with supports, cost 0.19 EUR" {
+		t.Fatal(got)
+	}
+	e.Supports, e.Cost, e.Minutes = false, 0, 21
+	if got := e.Line(); got != "21 min, 7.4 g PLA (2.48 m), 100 layers at 0.2 mm, no supports needed" {
+		t.Fatal(got)
+	}
+	if got := (estimates.Estimate{Status: "failed", Error: "boom"}).Line(); got != "failed: boom" {
+		t.Fatal(got)
+	}
+	if got := (estimates.Estimate{Status: "running"}).Line(); got != "still slicing" {
+		t.Fatal(got)
+	}
+	two := estimates.Summarise(slicer.Result{Filaments: []slicer.Filament{{Type: "PLA", Grams: 1}, {Type: "PETG", Grams: 1}, {Type: "PLA", Grams: 1}}}, 0)
+	if two.Filament != "PLA, PETG" || two.Grams != 3 {
+		t.Fatalf("%+v", two)
+	}
+}

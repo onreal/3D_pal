@@ -259,3 +259,85 @@ func TestRestoreMakesAnOldVersionCurrent(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestPrintersTestAndListings(t *testing.T) {
+	e := newEnv(t)
+	ps, err := e.Svc.Printers(ctx, true)
+	if err != nil || len(ps) != 1 || !ps[0].Default || ps[0].Status == nil || ps[0].Status.State != printer.Idle {
+		t.Fatalf("%+v %v", ps, err)
+	}
+	checks, err := e.Svc.TestPrinter(ctx, "sim")
+	if err != nil || len(checks) != 1 || !checks[0].OK {
+		t.Fatalf("%+v %v", checks, err)
+	}
+	if _, err := e.Svc.TestPrinter(ctx, "nope"); !errors.Is(err, config.ErrUnknownPrinter) {
+		t.Fatalf("got %v", err)
+	}
+	e.Svc.Compile(ctx, "cube", cube, map[string]any{"size": 20.0})
+	projects, _ := e.Svc.Projects()
+	if len(projects) != 1 || projects[0].Name != "cube" {
+		t.Fatalf("%+v", projects)
+	}
+	a, _ := e.Svc.RequestApproval(ctx, "cube", 0, "sim", slicer.Overrides{})
+	if j, err := e.Svc.Job(a.Job.ID); err != nil || j.Version != 1 || len(j.Estimate) == 0 {
+		t.Fatalf("%+v %v", j, err)
+	}
+	if _, err := e.Svc.Job("deadbeef"); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSummaryMentionsEstimateAndWarnings(t *testing.T) {
+	r := pipeline.CompileResult{Project: "box", Version: 2, Params: map[string]any{"label": "A1", "wall": 2.0},
+		Warnings: []string{"the top preview was not written"}, ViewerURL: "http://localhost:8080"}
+	s := r.Summary()
+	for _, want := range []string{`label="A1"`, "wall=2", "Warning: the top preview", "localhost:8080"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("summary missing %q: %s", want, s)
+		}
+	}
+}
+
+func TestEstimateErrorsAreReported(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.Svc.Estimate(ctx, "cube", nil, "", slicer.Overrides{}); !errors.Is(err, project.ErrNotFound) {
+		t.Fatalf("got %v", err)
+	}
+	e.Svc.Compile(ctx, "cube", cube, nil)
+	if _, err := e.Svc.Estimate(ctx, "cube", nil, "nope", slicer.Overrides{}); !errors.Is(err, config.ErrUnknownPrinter) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := e.Svc.StartEstimate("cube", 9, ""); !errors.Is(err, project.ErrNotFound) {
+		t.Fatalf("got %v", err)
+	}
+	if _, _, err := e.Svc.CachedEstimate("cube", 1, "nope"); !errors.Is(err, config.ErrUnknownPrinter) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := e.Svc.Restore(ctx, "cube", 7); !errors.Is(err, project.ErrNotFound) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestBusyPrinterIsNotUploadedTo(t *testing.T) {
+	e := newEnv(t)
+	a := mustRequestApproval(t, e, "cube")
+	e.Svc.Approve(a.Job.ID)
+	e.Svc.Print(ctx, a.Job.ID)
+	b, _ := e.Svc.RequestApproval(ctx, "cube", 0, "", slicer.Overrides{})
+	e.Svc.Approve(b.Job.ID)
+	if _, err := e.Svc.Print(ctx, b.Job.ID); !errors.Is(err, printer.ErrBusy) {
+		t.Fatalf("want ErrBusy, got %v", err)
+	}
+	if e.Printer.Uploads() != 1 {
+		t.Fatal("uploaded to a busy printer")
+	}
+}
+
+func TestDefaultPrinterBuiltFromRegistry(t *testing.T) {
+	e := newEnv(t)
+	svc := pipeline.New(pipeline.Deps{DB: storeOf(t), Config: e.Config, Events: e.Events, Projects: project.NewStore(storeOf(t), t.TempDir())})
+	ps, err := svc.Printers(ctx, false)
+	if err != nil || len(ps) != 1 || ps[0].Capabilities.Model != "Fake printer" {
+		t.Fatalf("%+v %v", ps, err)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/margarit/printpipe/internal/project"
@@ -83,5 +84,37 @@ func TestUnknownVersion(t *testing.T) {
 	compile(t, s, "cube", nil)
 	if _, err := s.Get("cube", 9); !errors.Is(err, project.ErrNotFound) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestPromoteAndLog(t *testing.T) {
+	work := t.TempDir()
+	s := project.NewStore(storetest.Open(t), work)
+	v := compile(t, s, "cube", nil)
+	job := filepath.Join(v.Dir, "slices", "job.gcode.3mf")
+	os.MkdirAll(filepath.Dir(job), 0o755)
+	os.WriteFile(job, []byte("sliced"), 0o644)
+	if err := s.Promote(v, job, project.Job); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(work, "cube", project.Job)); string(b) != "sliced" {
+		t.Fatalf("%q", b)
+	}
+	s.Log("cube", "compile_model exit=0\n")
+	s.Log("../evil", "ignored")
+	if b, _ := os.ReadFile(filepath.Join(work, "cube", project.RunLog)); !strings.Contains(string(b), "compile_model exit=0") {
+		t.Fatalf("%q", b)
+	}
+	if s.Work() != work || v.Path(project.STL) != filepath.Join(work, "cube", "v1", "model.stl") {
+		t.Fatal("paths")
+	}
+	if err := s.Promote(v, filepath.Join(work, "missing"), project.Job); err == nil {
+		t.Fatal("missing source promoted")
+	}
+	if _, err := s.List("../x"); err == nil {
+		t.Fatal("bad name listed")
+	}
+	if _, err := s.Get("../x", 0); err == nil {
+		t.Fatal("bad name read")
 	}
 }
