@@ -1,4 +1,8 @@
 import type { Page, Route } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+// A 20 mm cube sliced by Bambu Studio 02.08.02.61 with A1 presets (100 layers).
+const slicedCube = readFileSync(new URL("./fixtures/cube.gcode.3mf", import.meta.url));
 
 /** ASCII STL of an axis-aligned box. */
 export function cubeSTL(x: number, y = x, z = x): string {
@@ -72,6 +76,8 @@ export async function stubApi(page: Page, opts: StubOptions = {}) {
       return json(route, { id, project: "cube", version: 1, printer_id: "a1", approved: true, printed: false, estimate });
     }
     if (path === "/api/projects/cube/versions/1/estimate") return json(route, estimate);
+    if (path === "/api/projects/cube/versions/1/job.gcode.3mf" || path === "/api/projects/cube/job.gcode.3mf")
+      return route.fulfill({ status: 200, contentType: "application/vnd.ms-package.3dmanufacturing-3dmodel+xml", body: slicedCube });
     return json(route, { error: `no stub for ${req.method()} ${path}` }, 404);
   });
   return requests;

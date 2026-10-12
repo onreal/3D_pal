@@ -5,6 +5,7 @@ import { h, replace } from "../dom";
 const SUPPORT_ROLE = 5; // FeatureRole.Support in @chestnutlabs/toolpath-core
 
 interface PreviewElement extends HTMLElement {
+  theme: { background?: string; gridColor?: string; bedColor?: string } | undefined;
   source: ArrayBuffer | null;
   buildVolume: { x: number; y: number; z: number } | undefined;
   layerRange: [number, number] | null;
@@ -75,11 +76,18 @@ export class ToolpathPreview {
   }
 
   private async loadElement(buf: ArrayBuffer, volume: Vec) {
-    await import("@chestnutlabs/gcode-preview-element/define");
+    // Register explicitly: the package's side-effect-only "define" entry is tree-shaken away in builds.
+    const { defineGcodePreview } = await import("@chestnutlabs/gcode-preview-element");
+    defineGcodePreview();
     this.fallback = null;
     const el = document.createElement("gcode-preview") as PreviewElement;
     el.setAttribute("quality", "auto");
     el.setAttribute("show-travel", "false");
+    el.setAttribute("view", "iso");
+    el.setAttribute("frame-content", "object");
+    const css = getComputedStyle(document.body);
+    const color = (v: string, d: string) => css.getPropertyValue(v).trim() || d;
+    el.theme = { background: color("--viewer-bg", "#f4f5f7"), gridColor: color("--border", "#dde1e6"), bedColor: color("--muted", "#5f6b7a") };
     el.className = "toolpath-canvas";
     el.buildVolume = { x: volume.X, y: volume.Y, z: volume.Z };
     this.stage.replaceChildren(el);
