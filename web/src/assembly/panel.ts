@@ -29,6 +29,7 @@ export class AssemblyPanel {
   private stepLabel = h("output", { class: "small", "data-testid": "assembly-step" }, "");
   private speed = h("select", { "aria-label": "Speed" }, ...SPEEDS.map((s) => h("option", { value: String(s), selected: s === 1 }, `${s}×`)));
   private ghosts = h("input", { type: "checkbox", checked: true, "aria-label": "Show the parts still to come" });
+  private xray = h("input", { type: "checkbox", "aria-label": "See-through parts" });
   private view: AssemblyView | null = null;
   private result: AssemblyResult | null = null;
   private parts: AssemblyPart[] = [];
@@ -47,6 +48,7 @@ export class AssemblyPanel {
       this.setTime(Number(this.scrub.value));
     });
     this.ghosts.addEventListener("change", () => this.view?.setGhosts(this.ghosts.checked));
+    this.xray.addEventListener("change", () => this.view?.setXray(this.xray.checked));
     const btn = (label: string, aria: string, fn: () => void) => h("button", { type: "button", "aria-label": aria, onclick: fn }, label);
     const shot = h("button", { type: "button" }, "Screenshot");
     shot.addEventListener("click", async () => {
@@ -63,6 +65,7 @@ export class AssemblyPanel {
         h("label", { class: "group slider grow" }, this.scrub, this.stepLabel),
         h("label", { class: "group inline small" }, "Speed ", this.speed),
         h("label", { class: "group inline small" }, this.ghosts, " Ghosts"),
+        h("label", { class: "group inline small" }, this.xray, " X-ray"),
         h("div", { class: "group" }, shot)),
       h("div", { class: "assembly-body" },
         this.stage,
@@ -123,6 +126,7 @@ export class AssemblyPanel {
     this.status.className = "muted small";
     this.status.textContent = r.note ?? `${r.parts.length} steps from the model's assembly declaration.`;
     await this.view.load(r, this.parts, (p) => urls.assemblyPart(this.project, this.version, p.index));
+    this.view.setXray(this.xray.checked);
     this.scrub.max = String(this.n);
     this.scrub.disabled = this.playBtn.disabled = this.n === 0;
     this.renderList();

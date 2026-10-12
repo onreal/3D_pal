@@ -270,10 +270,7 @@ func (s *Service) buildPieces(ctx context.Context, v project.Version, defines []
 			faces = append(faces, p.Faces...)
 			tris += len(p.Faces)
 		}
-		label := fmt.Sprintf("Part %d", i+1)
-		if len(g) > 1 {
-			label = fmt.Sprintf("Part %d (×%d)", i+1, len(g))
-		}
+		label := fmt.Sprintf("Part %d", i+1) // the viewer shows the count beside it
 		p := Part{Index: i, ID: fmt.Sprintf("piece-%d", i+1), Label: label, Color: g[0].Color, Count: len(g), Triangles: tris}
 		p.Min, p.Max, p.Volume = bounds(g)
 		if err := m.WriteSTL(PartFile(v, i), faces); err != nil {

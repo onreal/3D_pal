@@ -120,7 +120,7 @@ func TestPiecesWhenNoStepsAreDeclared(t *testing.T) {
 	if r.Status != "done" || r.Mode != assembly.Pieces || r.Note == "" || len(r.Parts) != 3 {
 		t.Fatalf("%+v", r)
 	}
-	if r.Parts[0].Min.Z != 0 || r.Parts[1].Count != 2 || r.Parts[1].Label != "Part 2 (×2)" || r.Parts[2].Min.Z != 5 {
+	if r.Parts[0].Min.Z != 0 || r.Parts[1].Count != 2 || r.Parts[1].Label != "Part 2" || r.Parts[2].Min.Z != 5 {
 		t.Fatalf("bottom to top, instances grouped: %+v", r.Parts)
 	}
 }

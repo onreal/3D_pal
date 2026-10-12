@@ -112,6 +112,18 @@ export class AssemblyView {
     this.render();
   }
 
+  /** See-through parts, to watch inner parts go in behind a housing. */
+  setXray(on: boolean) {
+    for (const p of this.placed) {
+      const m = p.solid.material as THREE.MeshStandardMaterial;
+      m.transparent = on;
+      m.opacity = on ? 0.4 : 1;
+      m.depthWrite = !on;
+      m.needsUpdate = true;
+    }
+    this.render();
+  }
+
   setGhosts(on: boolean) {
     this.ghosts = on;
     this.setTime(this.t);

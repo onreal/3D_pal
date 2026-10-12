@@ -149,6 +149,36 @@ HTTP clients point at `http://127.0.0.1:8080/mcp`. For stdio-only clients withou
 | Port 8080 is taken by another program | `PRINTPIPE_PORT=8090 ./printpipe.sh up` and `PRINTPIPE_PORT=8090 ./printpipe.sh mcp-add`. |
 | Very slow on Apple Silicon | Turn on Rosetta emulation in Docker Desktop settings. |
 
+## Assembly mode
+
+The viewer's **Assembly** tab adds a model's parts one by one along a timeline: play,
+pause, step, scrub, change speed, show faint outlines of the parts still to come
+("Ghosts"), see through housings ("X-ray"), click a step to jump to it, and reorder steps
+(kept per project in the browser).
+
+For named, ordered steps the model declares its build order and draws one step on its
+own when asked. The agent knows this convention; for an existing model ask it to "add
+assembly steps":
+
+```openscad
+/* [Hidden] */
+assembly = [["cap_bottom", "Bottom cap"], ["ring", "Ring"], ["planets", "Planets"]]; // build order
+assembly_only = "";  // the pipeline sets this to render one step alone
+module step(id) { if (assembly_only == "" || assembly_only == id) children(); }
+
+module assembled() {
+  step("cap_bottom") color("orange") cap_bottom();
+  step("ring")       color("orange") ring();
+  step("planets")    color("dimgray") for (i = [0:3]) planet_at(i);
+}
+```
+
+Each step is rendered separately in its assembled position (a few at once, with the
+Manifold engine), with its colour, and identical copies are counted (Planets ×4). If the
+model has a `part` parameter with an `assembled` option, that option is used. A model
+without the declaration still works: its assembled render is split into separate pieces,
+bottom to top, though parts that touch show as one. Results are cached per version.
+
 ## What the agent gets
 
 | Tool | Does |
