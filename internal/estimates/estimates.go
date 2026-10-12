@@ -36,6 +36,8 @@ type Estimate struct {
 	Currency    string    `json:"currency,omitempty"`
 	ComputedAt  time.Time `json:"computed_at"`
 	Key         string    `json:"key"`
+	Session     string    `json:"session,omitempty"` // the agent session that asked for it
+	Client      string    `json:"client,omitempty"`
 	JobPath     string    `json:"-"` // the sliced file, reused at approval
 }
 
@@ -80,6 +82,8 @@ type Input struct {
 	ProfileHashes string // hash of the profile files and the job's overrides
 	PricePerKg    float64
 	Currency      string
+	// Session and Client say who asked; they don't change the slice or the cache key.
+	Session, Client string
 }
 
 func (in Input) Key() string {
@@ -179,6 +183,7 @@ func (s *Service) Cached(in Input) (Estimate, bool, error) {
 
 func (s *Service) label(e Estimate, in Input) Estimate {
 	e.Project, e.Version, e.PrinterID, e.Key = in.Project, in.Version, in.PrinterID, in.Key()
+	e.Session, e.Client = in.Session, in.Client
 	if e.Cost > 0 {
 		e.Currency = in.Currency
 	}

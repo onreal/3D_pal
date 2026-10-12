@@ -19,12 +19,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/margarit/printpipe/internal/bridge"
 	"github.com/margarit/printpipe/internal/config"
 	"github.com/margarit/printpipe/internal/events"
 	"github.com/margarit/printpipe/internal/jobs"
 	"github.com/margarit/printpipe/internal/pipeline"
 	"github.com/margarit/printpipe/internal/printer"
 	"github.com/margarit/printpipe/internal/project"
+	"github.com/margarit/printpipe/internal/sessions"
 	"github.com/margarit/printpipe/internal/slicer"
 )
 
@@ -32,20 +34,45 @@ import (
 var static embed.FS
 
 type Server struct {
-	svc    *pipeline.Service
-	cfg    *config.Store
-	hub    *events.Hub
-	assets fs.FS
+	svc      *pipeline.Service
+	cfg      *config.Store
+	hub      *events.Hub
+	assets   fs.FS
+	sessions *sessions.Registry
 }
 
+// Options are the optional parts of the HTTP surface.
+type Options struct {
+	// MCP, if set, is served at /mcp (Streamable HTTP; one server, many sessions).
+	MCP http.Handler
+	// Sessions, if set, backs /api/sessions.
+	Sessions *sessions.Registry
+}
+
+// BridgeHeader marks requests relayed by printpipe bridge for a stdio client.
+const BridgeHeader = bridge.Header
+
 // Handler returns the whole HTTP surface. assets overrides the embedded frontend (tests pass nil).
-func Handler(svc *pipeline.Service, cfg *config.Store, hub *events.Hub, assets fs.FS) http.Handler {
+func Handler(svc *pipeline.Service, cfg *config.Store, hub *events.Hub, assets fs.FS, opts Options) http.Handler {
 	if assets == nil {
 		sub, _ := fs.Sub(static, "static")
 		assets = sub
 	}
-	s := &Server{svc: svc, cfg: cfg, hub: hub, assets: assets}
+	reg := opts.Sessions
+	if reg == nil {
+		reg = sessions.NewRegistry()
+	}
+	s := &Server{svc: svc, cfg: cfg, hub: hub, assets: assets, sessions: reg}
 	mux := http.NewServeMux()
+	if opts.MCP != nil {
+		h := s.trackMCP(opts.MCP)
+		for _, m := range []string{"POST", "GET", "DELETE"} { // Streamable HTTP uses these three
+			mux.Handle(m+" /mcp", h)
+		}
+	}
+	mux.HandleFunc("GET /api/sessions", s.listSessions)
+	mux.HandleFunc("GET /api/sessions/{id}", s.getSession)
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.endSession)
 
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.Handle("GET /api/events", hub)
@@ -401,7 +428,7 @@ func (s *Server) projectLog(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runs, err := s.svc.Runs(name, 200)
+	runs, err := s.svc.Runs(pipeline.RunFilter{Project: name}, 200)
 	if err != nil {
 		fail(w, err)
 		return
@@ -410,7 +437,7 @@ func (s *Server) projectLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
-	runs, err := s.svc.Runs("", 200)
+	runs, err := s.svc.Runs(pipeline.RunFilter{Project: r.URL.Query().Get("project"), Session: r.URL.Query().Get("session")}, 200)
 	if err != nil {
 		fail(w, err)
 		return
@@ -650,6 +677,90 @@ func (s *Server) cancel(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.svc.Cancel(r.Context(), id); err != nil {
 		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// ---- sessions --------------------------------------------------------------
+
+// sessionWriter catches the session ID the MCP handler assigns on initialize.
+type sessionWriter struct {
+	http.ResponseWriter
+	onHeader func(h http.Header)
+	done     bool
+}
+
+func (w *sessionWriter) WriteHeader(code int) {
+	if !w.done {
+		w.done = true
+		w.onHeader(w.Header())
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *sessionWriter) Write(b []byte) (int, error) {
+	if !w.done {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *sessionWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *sessionWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// trackMCP records how each new MCP session arrived: its remote address, user agent,
+// and whether printpipe bridge relays it for a stdio client.
+func (s *Server) trackMCP(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Header.Get("Mcp-Session-Id") != "" {
+			h.ServeHTTP(w, r)
+			return
+		}
+		transport := sessions.HTTP
+		if r.Header.Get(BridgeHeader) != "" {
+			transport = sessions.Bridge
+		}
+		h.ServeHTTP(&sessionWriter{ResponseWriter: w, onHeader: func(hd http.Header) {
+			if id := hd.Get("Mcp-Session-Id"); id != "" {
+				s.sessions.Transport(id, transport, r.RemoteAddr, r.UserAgent())
+			}
+		}}, r)
+	})
+}
+
+func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, s.sessions.List())
+}
+
+func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
+	info, ok := s.sessions.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, errors.New("no such session"))
+		return
+	}
+	runs, err := s.svc.Runs(pipeline.RunFilter{Session: info.ID}, 100)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"session": info, "runs": runs})
+}
+
+// endSession closes a session from the viewer; its client reconnects with a new one.
+func (s *Server) endSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.sessions.Get(id); !ok {
+		writeErr(w, http.StatusNotFound, errors.New("no such session"))
+		return
+	}
+	if !s.sessions.End(id) {
+		writeErr(w, http.StatusConflict, errors.New("the session is already closed"))
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})

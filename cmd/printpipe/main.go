@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/margarit/printpipe/internal/bridge"
 	"github.com/margarit/printpipe/internal/config"
 	"github.com/margarit/printpipe/internal/events"
 	"github.com/margarit/printpipe/internal/jobs"
@@ -26,6 +27,7 @@ import (
 	"github.com/margarit/printpipe/internal/project"
 	"github.com/margarit/printpipe/internal/runner"
 	"github.com/margarit/printpipe/internal/scad"
+	"github.com/margarit/printpipe/internal/sessions"
 	"github.com/margarit/printpipe/internal/slicer"
 	"github.com/margarit/printpipe/internal/store"
 	"github.com/margarit/printpipe/internal/web"
@@ -40,6 +42,13 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "bridge" {
+		if err := runBridge(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "printpipe bridge:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "printpipe:", err)
 		os.Exit(1)
@@ -112,6 +121,11 @@ func run() error {
 
 	exec := runner.Exec{}
 	hub := events.NewHub()
+	reg := sessions.NewRegistry()
+	reg.OnChange = func(kind string, info sessions.Info) {
+		hub.Publish(events.Session, map[string]any{"kind": kind, "session": info})
+		logger.Info("session "+kind, "id", info.ID, "client", info.Client, "transport", info.Transport, "calls", info.Calls)
+	}
 	svc := pipeline.New(pipeline.Deps{
 		DB:        db,
 		Runner:    exec,
@@ -129,7 +143,13 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv := &http.Server{Addr: *addr, Handler: web.Handler(svc, cfg, hub, nil), ReadHeaderTimeout: 10 * time.Second}
+	// One MCP server for every session: Streamable HTTP at /mcp (many clients at once),
+	// and stdio when the container was started with docker run -i.
+	mcpServer := mcpserver.New(svc, version, reg)
+	mcpHTTP := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer },
+		&mcp.StreamableHTTPOptions{SessionTimeout: 12 * time.Hour, Logger: logger})
+	srv := &http.Server{Addr: *addr, Handler: web.Handler(svc, cfg, hub, nil, web.Options{MCP: mcpHTTP, Sessions: reg}),
+		ReadHeaderTimeout: 10 * time.Second}
 	httpErr := make(chan error, 1)
 	go func() {
 		logger.Info("http listening", "addr", *addr, "version", version)
@@ -142,12 +162,12 @@ func run() error {
 
 	if useMCP {
 		logger.Info("mcp serving on stdio")
-		err = mcpserver.New(svc, version).Run(ctx, &mcp.StdioTransport{})
+		err = mcpServer.Run(ctx, &mcp.StdioTransport{})
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
 			logger.Error("mcp stopped", "err", err)
 		}
 	} else {
-		logger.Info("no agent attached: serving the viewer only; MCP clients start the container with docker run -i", "url", *viewerURL)
+		logger.Info("serving the viewer and MCP over HTTP", "viewer", *viewerURL, "mcp", *viewerURL+"/mcp")
 		select {
 		case <-ctx.Done():
 		case err = <-httpErr:
@@ -159,6 +179,25 @@ func run() error {
 	srv.Shutdown(shutdown)
 	logger.Info("stopped")
 	return nil
+}
+
+// runBridge relays a stdio MCP client to the server's /mcp endpoint.
+func runBridge(args []string) error {
+	fs := flag.NewFlagSet("bridge", flag.ContinueOnError)
+	url := fs.String("url", envOr("PRINTPIPE_MCP_URL", "http://127.0.0.1:8080/mcp"), "the server's MCP endpoint")
+	pidfile := fs.String("pidfile", "", "write the process ID here, so a wrapper can stop the bridge")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *pidfile != "" {
+		if err := os.WriteFile(*pidfile, []byte(fmt.Sprint(os.Getpid())), 0o644); err != nil {
+			return err
+		}
+		defer os.Remove(*pidfile)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return bridge.Run(ctx, os.Stdin, os.Stdout, *url, version)
 }
 
 // mcpEnabled decides whether to serve MCP. "auto" serves it only when stdin is a pipe:

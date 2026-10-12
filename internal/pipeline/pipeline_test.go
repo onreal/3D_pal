@@ -130,7 +130,7 @@ func TestCompileErrorLeavesNoVersion(t *testing.T) {
 	if _, err := e.Svc.Version("cube", 0); !errors.Is(err, project.ErrNotFound) {
 		t.Fatalf("a failed compile left a version: %v", err)
 	}
-	runs, _ := e.Svc.Runs("cube", 5)
+	runs, _ := e.Svc.Runs(pipeline.RunFilter{Project: "cube"}, 5)
 	if len(runs) != 1 || runs[0].ExitCode == nil || *runs[0].ExitCode != 1 {
 		t.Fatalf("run log: %+v", runs)
 	}

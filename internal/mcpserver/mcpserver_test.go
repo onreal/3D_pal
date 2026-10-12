@@ -18,7 +18,7 @@ var ctx = context.Background()
 func connect(t *testing.T) (*mcp.ClientSession, *pipelinetest.Env) {
 	t.Helper()
 	env := pipelinetest.New(t)
-	server := mcpserver.New(env.Svc, "test")
+	server := mcpserver.New(env.Svc, "test", nil)
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := server.Connect(ctx, st, nil)
 	if err != nil {

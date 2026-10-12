@@ -27,6 +27,7 @@ import (
 	"github.com/margarit/printpipe/internal/project"
 	"github.com/margarit/printpipe/internal/runner"
 	"github.com/margarit/printpipe/internal/scad"
+	"github.com/margarit/printpipe/internal/sessions"
 	"github.com/margarit/printpipe/internal/slicer"
 )
 
@@ -59,6 +60,7 @@ type Service struct {
 
 	watchMu  sync.Mutex
 	watching map[string]context.CancelFunc
+	locks    sync.Map // project name → *sync.Mutex
 }
 
 func New(d Deps) *Service {
@@ -94,12 +96,18 @@ var (
 
 // ---- run log -------------------------------------------------------------
 
-// record runs fn as one tool call, logging it to the runs table, the project's run.log and stderr.
-func (s *Service) record(project, tool string, args any, fn func() error) error {
+// record runs fn as one tool call, logging it to the runs table, the project's run.log and
+// stderr, with the agent session that made it (none for the viewer's own actions).
+func (s *Service) record(ctx context.Context, project, tool string, args any, fn func() error) error {
 	start := time.Now().UTC()
 	rawArgs, _ := json.Marshal(args)
-	res, _ := s.d.DB.Exec(`INSERT INTO runs (project, tool, args, started_at) VALUES (?, ?, ?, ?)`,
-		nullable(project), tool, string(rawArgs), start.Format(time.RFC3339Nano))
+	caller, _ := sessions.From(ctx)
+	client := caller.Client
+	if caller.ID == "" {
+		client = "viewer"
+	}
+	res, _ := s.d.DB.Exec(`INSERT INTO runs (project, tool, args, started_at, session_id, client) VALUES (?, ?, ?, ?, ?, ?)`,
+		nullable(project), tool, string(rawArgs), start.Format(time.RFC3339Nano), nullable(caller.ID), client)
 	err := fn()
 	code, msg := 0, "ok"
 	if err != nil {
@@ -117,11 +125,35 @@ func (s *Service) record(project, tool string, args any, fn func() error) error 
 		s.d.Projects.Log(project, fmt.Sprintf("%s exit=%d %s (%s)", tool, code, first, took))
 	}
 	if err != nil {
-		s.d.Logger.Warn("tool failed", "tool", tool, "project", project, "took", took, "err", err)
+		s.d.Logger.Warn("tool failed", "tool", tool, "project", project, "session", caller.ID, "client", client, "took", took, "err", err)
 	} else {
-		s.d.Logger.Info("tool ok", "tool", tool, "project", project, "took", took)
+		s.d.Logger.Info("tool ok", "tool", tool, "project", project, "session", caller.ID, "client", client, "took", took)
 	}
 	return err
+}
+
+// emit publishes an event tagged with the session that caused it, so the viewer can
+// follow one session's work.
+func (s *Service) emit(ctx context.Context, typ string, v any) {
+	caller, ok := sessions.From(ctx)
+	if !ok {
+		s.d.Events.Publish(typ, v)
+		return
+	}
+	b, err := json.Marshal(v)
+	var m map[string]any
+	if err != nil || json.Unmarshal(b, &m) != nil {
+		s.d.Events.Publish(typ, v)
+		return
+	}
+	m["session"], m["client"] = caller.ID, caller.Client
+	s.d.Events.Publish(typ, m)
+}
+
+// projectLock serialises compiles of one project, so two sessions can't take the same version number.
+func (s *Service) projectLock(name string) *sync.Mutex {
+	l, _ := s.locks.LoadOrStore(name, &sync.Mutex{})
+	return l.(*sync.Mutex)
 }
 
 func nullable(s string) any {
@@ -132,6 +164,9 @@ func nullable(s string) any {
 }
 
 type Run struct {
+	Session    string    `json:"session,omitempty"`
+	Client     string    `json:"client,omitempty"`
+	Project    string    `json:"project,omitempty"`
 	Tool       string    `json:"tool"`
 	Args       string    `json:"args"`
 	ExitCode   *int      `json:"exit_code"`
@@ -140,13 +175,24 @@ type Run struct {
 	FinishedAt time.Time `json:"finished_at,omitempty"`
 }
 
-// Runs lists the latest tool calls for a project (all projects when empty), newest first.
-func (s *Service) Runs(proj string, limit int) ([]Run, error) {
-	q := `SELECT tool, args, exit_code, coalesce(message, ''), started_at, coalesce(finished_at, '') FROM runs`
+// RunFilter narrows the run log; empty fields match everything.
+type RunFilter struct {
+	Project string
+	Session string
+}
+
+// Runs lists the latest tool calls, newest first.
+func (s *Service) Runs(f RunFilter, limit int) ([]Run, error) {
+	q := `SELECT coalesce(session_id, ''), coalesce(client, ''), coalesce(project, ''), tool, args, exit_code,
+		coalesce(message, ''), started_at, coalesce(finished_at, '') FROM runs WHERE 1 = 1`
 	args := []any{}
-	if proj != "" {
-		q += ` WHERE project = ?`
-		args = append(args, proj)
+	if f.Project != "" {
+		q += ` AND project = ?`
+		args = append(args, f.Project)
+	}
+	if f.Session != "" {
+		q += ` AND session_id = ?`
+		args = append(args, f.Session)
 	}
 	q += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, limit)
@@ -160,7 +206,7 @@ func (s *Service) Runs(proj string, limit int) ([]Run, error) {
 		var r Run
 		var code sql.NullInt64
 		var started, finished string
-		if err := rows.Scan(&r.Tool, &r.Args, &code, &r.Message, &started, &finished); err != nil {
+		if err := rows.Scan(&r.Session, &r.Client, &r.Project, &r.Tool, &r.Args, &code, &r.Message, &started, &finished); err != nil {
 			return nil, err
 		}
 		if code.Valid {
@@ -248,7 +294,7 @@ func fmtValue(v any) string {
 // code with new parameter values.
 func (s *Service) Compile(ctx context.Context, proj, code string, params map[string]any) (CompileResult, error) {
 	var res CompileResult
-	err := s.record(proj, "compile_model", map[string]any{"params": params, "code_bytes": len(code)}, func() error {
+	err := s.record(ctx, proj, "compile_model", map[string]any{"params": params, "code_bytes": len(code)}, func() error {
 		var err error
 		res, err = s.compile(ctx, proj, code, params)
 		return err
@@ -281,6 +327,9 @@ func (s *Service) compile(ctx context.Context, proj, code string, params map[str
 		return CompileResult{}, err
 	}
 
+	lock := s.projectLock(proj)
+	lock.Lock()
+	defer lock.Unlock()
 	v, err := s.d.Projects.Next(proj)
 	if err != nil {
 		return CompileResult{}, err
@@ -336,7 +385,7 @@ func (s *Service) compile(ctx context.Context, proj, code string, params map[str
 			res.Fits = printer.Fits(caps, toVolume(res.Size))
 		}
 	}
-	s.d.Events.Publish(events.Model, map[string]any{"project": proj, "version": v.Number, "size_mm": res.Size, "fits": res.Fits})
+	s.emit(ctx, events.Model, map[string]any{"project": proj, "version": v.Number, "size_mm": res.Size, "fits": res.Fits})
 	return res, nil
 }
 
@@ -402,7 +451,7 @@ func (s *Service) printerFor(set config.Settings, id string) (config.Printer, pr
 // TestPrinter runs a printer's connection test, step by step when the driver supports it.
 func (s *Service) TestPrinter(ctx context.Context, id string) ([]printer.Check, error) {
 	var checks []printer.Check
-	err := s.record("", "test_printer", map[string]any{"printer_id": id}, func() error {
+	err := s.record(ctx, "", "test_printer", map[string]any{"printer_id": id}, func() error {
 		set, err := s.d.Config.Load()
 		if err != nil {
 			return err
@@ -442,7 +491,7 @@ func (s *Service) Status(ctx context.Context, id string) (printer.Status, error)
 
 // Cancel stops the current print on a printer.
 func (s *Service) Cancel(ctx context.Context, id string) error {
-	return s.record("", "cancel_print", map[string]any{"printer_id": id}, func() error {
+	return s.record(ctx, "", "cancel_print", map[string]any{"printer_id": id}, func() error {
 		set, err := s.d.Config.Load()
 		if err != nil {
 			return err
@@ -455,7 +504,7 @@ func (s *Service) Cancel(ctx context.Context, id string) error {
 			return err
 		}
 		if st, err := p.Status(ctx); err == nil {
-			s.d.Events.Publish(events.Printer, map[string]any{"printer_id": cp.ID, "status": st})
+			s.emit(ctx, events.Printer, map[string]any{"printer_id": cp.ID, "status": st})
 		}
 		return nil
 	})
@@ -535,7 +584,7 @@ func mergeOverrides(d config.SlicerDefault, o slicer.Overrides) slicer.Overrides
 // and returns time, filament and cost. It never creates or approves a job.
 func (s *Service) Estimate(ctx context.Context, proj string, versions []int, printerID string, o slicer.Overrides) ([]estimates.Estimate, error) {
 	var out []estimates.Estimate
-	err := s.record(proj, "estimate_print", map[string]any{"versions": versions, "printer_id": printerID, "overrides": o}, func() error {
+	err := s.record(ctx, proj, "estimate_print", map[string]any{"versions": versions, "printer_id": printerID, "overrides": o}, func() error {
 		set, err := s.d.Config.Load()
 		if err != nil {
 			return err
@@ -574,11 +623,14 @@ func (s *Service) estimateVersion(ctx context.Context, set config.Settings, cp c
 	if err != nil {
 		return estimates.Estimate{}, err
 	}
+	if c, ok := sessions.From(ctx); ok {
+		in.Session, in.Client = c.ID, c.Client
+	}
 	e, err := s.est.Get(ctx, in, slice)
 	if err != nil {
 		return e, err
 	}
-	s.d.Events.Publish(events.Estimate, e)
+	s.emit(ctx, events.Estimate, e)
 	return e, nil
 }
 
@@ -690,7 +742,7 @@ func (s *Service) Restore(ctx context.Context, proj string, n int) (CompileResul
 		}
 	}
 	var res CompileResult
-	err = s.record(proj, "restore_version", map[string]any{"version": v.Number}, func() error {
+	err = s.record(ctx, proj, "restore_version", map[string]any{"version": v.Number}, func() error {
 		var err error
 		res, err = s.compile(ctx, proj, string(code), params)
 		return err
@@ -735,7 +787,7 @@ type Approval struct {
 // that waits for the user's Approve click. Nothing is sent to the printer.
 func (s *Service) RequestApproval(ctx context.Context, proj string, version int, printerID string, o slicer.Overrides) (Approval, error) {
 	var a Approval
-	err := s.record(proj, "request_approval", map[string]any{"version": version, "printer_id": printerID, "overrides": o}, func() error {
+	err := s.record(ctx, proj, "request_approval", map[string]any{"version": version, "printer_id": printerID, "overrides": o}, func() error {
 		set, err := s.d.Config.Load()
 		if err != nil {
 			return err
@@ -761,7 +813,7 @@ func (s *Service) RequestApproval(ctx context.Context, proj string, version int,
 		}
 		s.d.Projects.Promote(v, e.JobPath, project.Job)
 		a = Approval{Job: job, Estimate: e, PrinterName: cp.Name, ViewerURL: s.d.ViewerURL}
-		s.d.Events.Publish(events.Job, a)
+		s.emit(ctx, events.Job, a)
 		return nil
 	})
 	return a, err
@@ -770,7 +822,7 @@ func (s *Service) RequestApproval(ctx context.Context, proj string, version int,
 // Approve marks a job printable. Only the web API calls it, after the user clicks Approve.
 func (s *Service) Approve(jobID string) (jobs.Job, error) {
 	job, getErr := s.d.Jobs.Get(jobID)
-	err := s.record(job.Project, "approve", map[string]any{"job_id": jobID, "by": "user"}, func() error {
+	err := s.record(context.Background(), job.Project, "approve", map[string]any{"job_id": jobID, "by": "user"}, func() error {
 		if getErr != nil {
 			return getErr
 		}
@@ -808,7 +860,7 @@ type PrintResult struct {
 func (s *Service) Print(ctx context.Context, jobID string) (PrintResult, error) {
 	var res PrintResult
 	job, getErr := s.d.Jobs.Get(jobID)
-	err := s.record(job.Project, "print_job", map[string]any{"job_id": jobID}, func() error {
+	err := s.record(ctx, job.Project, "print_job", map[string]any{"job_id": jobID}, func() error {
 		if getErr != nil {
 			return getErr
 		}
@@ -860,7 +912,7 @@ func (s *Service) Print(ctx context.Context, jobID string) (PrintResult, error) 
 			}
 			s.watch(cp, p)
 		}
-		s.d.Events.Publish(events.Printer, map[string]any{"printer_id": cp.ID, "status": res.Status, "job": res.Job})
+		s.emit(ctx, events.Printer, map[string]any{"printer_id": cp.ID, "status": res.Status, "job": res.Job})
 		return nil
 	})
 	return res, err

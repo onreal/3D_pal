@@ -15,6 +15,7 @@ import (
 	"github.com/margarit/printpipe/internal/printer"
 	"github.com/margarit/printpipe/internal/project"
 	"github.com/margarit/printpipe/internal/scad"
+	"github.com/margarit/printpipe/internal/sessions"
 	"github.com/margarit/printpipe/internal/slicer"
 )
 
@@ -124,8 +125,15 @@ func readOnly(title string) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{Title: title, ReadOnlyHint: true, IdempotentHint: true}
 }
 
-func New(svc *pipeline.Service, version string) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "print-pipeline", Version: version}, &mcp.ServerOptions{Instructions: instructions})
+// New returns the MCP server. One server serves every session (HTTP, bridge and stdio);
+// reg, if set, is told about each session and its tool calls.
+func New(svc *pipeline.Service, version string, reg *sessions.Registry) *mcp.Server {
+	t := &tracker{reg: reg}
+	s := mcp.NewServer(&mcp.Implementation{Name: "print-pipeline", Version: version}, &mcp.ServerOptions{
+		Instructions:       instructions,
+		InitializedHandler: t.initialized,
+	})
+	s.AddReceivingMiddleware(t.middleware)
 	notDestructive := false
 
 	mcp.AddTool(s, &mcp.Tool{

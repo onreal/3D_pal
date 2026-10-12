@@ -35,7 +35,7 @@ func setup(t *testing.T) *fixture {
 		"index.html":      {Data: []byte("<!doctype html><title>viewer</title>")},
 		"assets/app-1.js": {Data: []byte("console.log(1)")},
 	}
-	srv := httptest.NewServer(web.Handler(env.Svc, env.Config, hub, assets))
+	srv := httptest.NewServer(web.Handler(env.Svc, env.Config, hub, assets, web.Options{}))
 	t.Cleanup(srv.Close)
 	return &fixture{srv: srv, env: env, hub: hub}
 }
@@ -431,7 +431,7 @@ func TestPrintedJobCannotBeApprovedAgain(t *testing.T) {
 
 func TestFrontendNotBuilt(t *testing.T) {
 	env := pipelinetest.New(t)
-	srv := httptest.NewServer(web.Handler(env.Svc, env.Config, events.NewHub(), fstest.MapFS{}))
+	srv := httptest.NewServer(web.Handler(env.Svc, env.Config, events.NewHub(), fstest.MapFS{}, web.Options{}))
 	defer srv.Close()
 	resp, _ := http.Get(srv.URL + "/")
 	body, _ := io.ReadAll(resp.Body)

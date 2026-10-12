@@ -16,6 +16,7 @@ const (
 	Estimate = "estimate" // an estimate finished or failed
 	Printer  = "printer"  // printer status
 	Settings = "settings" // settings saved
+	Session  = "session"  // an agent session opened, changed or closed
 )
 
 type Event struct {
