@@ -152,10 +152,10 @@ func run() error {
 
 	// One MCP server for every session: Streamable HTTP at /mcp (many clients at once),
 	// and stdio when the container was started with docker run -i.
-	mcpServer := mcpserver.New(svc, version, reg)
+	asm := assembly.New(compiler, projects, func(r assembly.Result) { hub.Publish(events.Assembly, r) })
+	mcpServer := mcpserver.New(svc, version, reg, asm)
 	mcpHTTP := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer },
 		&mcp.StreamableHTTPOptions{SessionTimeout: 12 * time.Hour, Logger: logger})
-	asm := assembly.New(compiler, projects, func(r assembly.Result) { hub.Publish(events.Assembly, r) })
 	srv := &http.Server{Addr: *addr, Handler: web.Handler(svc, cfg, hub, nil, web.Options{MCP: mcpHTTP, Sessions: reg, Assembly: asm}),
 		ReadHeaderTimeout: 10 * time.Second}
 	httpErr := make(chan error, 1)

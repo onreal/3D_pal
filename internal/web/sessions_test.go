@@ -32,7 +32,7 @@ type multi struct {
 func setupMulti(t *testing.T) *multi {
 	env := pipelinetest.New(t)
 	reg := sessions.NewRegistry()
-	server := mcpserver.New(env.Svc, "test", reg)
+	server := mcpserver.New(env.Svc, "test", reg, nil)
 	mcpHTTP := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	srv := httptest.NewServer(web.Handler(env.Svc, env.Config, events.NewHub(), fstest.MapFS{}, web.Options{MCP: mcpHTTP, Sessions: reg}))
 	t.Cleanup(srv.Close)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/margarit/printpipe/internal/assembly"
 	"github.com/margarit/printpipe/internal/estimates"
 	"github.com/margarit/printpipe/internal/jobs"
 	"github.com/margarit/printpipe/internal/pipeline"
@@ -27,16 +28,10 @@ Write models with named top-level parameters in OpenSCAD Customizer style, for e
 "wall = 2; // [1:0.5:5] Wall thickness in mm", and change dimensions by passing params to
 compile_model with empty scad_code instead of rewriting the file.
 
-For a model with several parts, the viewer has an Assembly tab that adds the parts one by
-one along a timeline. Support it by declaring the build order and drawing one step on its
-own when asked:
-  /* [Hidden] */
-  assembly = [["base", "Base plate"], ["gear", "Gear"], ["lid", "Lid"]];  // build order
-  assembly_only = "";  // the pipeline sets this to one ID to render that step alone
-  module step(id) { if (assembly_only == "" || assembly_only == id) children(); }
-and wrap each part in the assembled view: step("gear") color("orange") translate(...) gear();
-Give every part its own color(). If the model has a "part" parameter, keep an
-"assembled" option that places every part where it belongs, with its clearances.`
+For a model with several parts, add an assembly timeline: the viewer's Assembly tab then
+plays the parts into place in build order. Read the resource printpipe://guides/assembly
+(or use the add_assembly_timeline prompt) for the convention, then check the result with
+get_assembly. printpipe://guides/modeling has the parameter and printability rules.`
 
 type CompileIn struct {
 	Project  string         `json:"project" jsonschema:"folder name: letters, digits, - and _"`
@@ -138,18 +133,24 @@ func readOnly(title string) *mcp.ToolAnnotations {
 
 // New returns the MCP server. One server serves every session (HTTP, bridge and stdio);
 // reg, if set, is told about each session and its tool calls.
-func New(svc *pipeline.Service, version string, reg *sessions.Registry) *mcp.Server {
+// asm, if set, adds the get_assembly tool.
+func New(svc *pipeline.Service, version string, reg *sessions.Registry, asm *assembly.Service) *mcp.Server {
 	t := &tracker{reg: reg}
 	s := mcp.NewServer(&mcp.Implementation{Name: "print-pipeline", Version: version}, &mcp.ServerOptions{
 		Instructions:       instructions,
 		InitializedHandler: t.initialized,
 	})
 	s.AddReceivingMiddleware(t.middleware)
+	addGuides(s)
+	addPrompts(s)
+	if asm != nil {
+		addAssemblyTool(s, svc, asm)
+	}
 	notDestructive := false
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "compile_model",
-		Description: "Write model.scad as a new version of the project, compile it to STL with OpenSCAD and return preview images. Pass empty scad_code with params to change parameters of the latest version. The user watches at http://localhost:8080.",
+		Description: "Write model.scad as a new version of the project, compile it to STL with OpenSCAD and return preview images. Pass empty scad_code with params to change parameters of the latest version. The user watches at http://localhost:8080. For multi-part models, declare assembly steps (printpipe://guides/assembly) and check them with get_assembly.",
 		Annotations: &mcp.ToolAnnotations{Title: "Compile model", DestructiveHint: &notDestructive},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in CompileIn) (*mcp.CallToolResult, any, error) {
 		res, err := svc.Compile(ctx, in.Project, in.Code, in.Params)

@@ -179,6 +179,22 @@ model has a `part` parameter with an `assembled` option, that option is used. A 
 without the declaration still works: its assembled render is split into separate pieces,
 bottom to top, though parts that touch show as one. Results are cached per version.
 
+## Agent skills (MCP prompts and guides)
+
+The server teaches agents its conventions through MCP:
+
+| Kind | Name | What it does |
+| --- | --- | --- |
+| Prompt | `add_assembly_timeline` (`project`, optional `order`) | Step-by-step task: read the model, declare the build order, compile, check with `get_assembly`, report. In Claude Code: `/mcp__print-pipeline__add_assembly_timeline upio-orbit`. |
+| Prompt | `design_part` (`request`, optional `project`) | Design a printable part: Customizer parameters, preview check, estimate, approval. |
+| Resource | `printpipe://guides/assembly` | The assembly convention, rules, example and common mistakes. In Claude Code, `@print-pipeline:printpipe://guides/assembly`. |
+| Resource | `printpipe://guides/modeling` | Parameters, `part` options and printability rules for the A1. |
+| Tool | `get_assembly` | Builds a version's timeline and reports each step (count, colour, position) and what to fix. |
+
+The server's instructions, the `compile_model` description and its summary point agents
+to these, so an agent working on a multi-part model is told to add a timeline and how to
+check it.
+
 ## What the agent gets
 
 | Tool | Does |
@@ -191,6 +207,7 @@ bottom to top, though parts that touch show as one. Results are cached per versi
 | `request_approval` | Slices and puts an Approve button in the viewer. Sends nothing. |
 | `print_job` | Uploads and starts an approved job. Fails with "Not approved yet" before your click. Prints once. |
 | `list_printers`, `printer_status`, `cancel_print` | Printers, live state, stop. |
+| `get_assembly` | The version's assembly timeline: steps in build order, counts, colours, problems to fix. |
 
 There is no approve tool: only your click in the viewer approves a print, and the setting
 cannot be turned off.

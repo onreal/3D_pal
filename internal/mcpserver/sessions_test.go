@@ -16,7 +16,7 @@ import (
 func TestStdioSessionIsTracked(t *testing.T) {
 	env := pipelinetest.New(t)
 	reg := sessions.NewRegistry()
-	server := mcpserver.New(env.Svc, "test", reg)
+	server := mcpserver.New(env.Svc, "test", reg, nil)
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := server.Connect(ctx, st, nil)
 	if err != nil {

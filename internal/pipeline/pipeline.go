@@ -243,6 +243,7 @@ type CompileResult struct {
 	Images       []Image             `json:"-"`
 	Warnings     []string            `json:"warnings,omitempty"`
 	Assembly     int                 `json:"assembly_steps,omitempty"`
+	AssemblyHint bool                `json:"-"`
 	Estimate     *estimates.Estimate `json:"estimate,omitempty"`
 	ViewerURL    string              `json:"viewer_url"`
 }
@@ -273,8 +274,11 @@ func (r CompileResult) Summary() string {
 	if r.Estimate != nil {
 		fmt.Fprintf(&b, "\nEstimate: %s.", r.Estimate.Line())
 	}
+	if r.AssemblyHint {
+		b.WriteString("\nTip: this model has an assembled view but no assembly steps. Declare them (printpipe://guides/assembly) and the viewer's Assembly tab plays the parts into place in build order.")
+	}
 	if r.Assembly > 0 {
-		fmt.Fprintf(&b, "\nAssembly: %d steps; the viewer's Assembly tab plays them in order.", r.Assembly)
+		fmt.Fprintf(&b, "\nAssembly: %d steps; check them with get_assembly; the viewer's Assembly tab plays them in order.", r.Assembly)
 	}
 	for _, w := range r.Warnings {
 		fmt.Fprintf(&b, "\nWarning: %s", w)
@@ -366,6 +370,9 @@ func (s *Service) compile(ctx context.Context, proj, code string, params map[str
 		res.Warnings = append(res.Warnings, "assembly steps: "+err.Error())
 	} else {
 		res.Assembly = len(steps)
+		if _, ok := scad.AssembledOption(decl); ok && len(steps) == 0 {
+			res.AssemblyHint = true
+		}
 	}
 	for i, angle := range set.Pipeline.PreviewAngles {
 		png := v.Path("preview-" + angle + ".png")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sync"
 )
 
 type Runner interface {
@@ -30,16 +31,20 @@ func (Exec) Run(ctx context.Context, name string, args ...string) ([]byte, error
 	return stdout.Bytes(), nil
 }
 
-// Fake records calls; tests script results with OnRun.
+// Fake records calls; tests script results with OnRun. It is safe for concurrent use.
 type Fake struct {
+	mu    sync.Mutex
 	Calls [][]string
 	OnRun func(name string, args []string) ([]byte, error)
 }
 
 func (f *Fake) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	f.mu.Lock()
 	f.Calls = append(f.Calls, append([]string{name}, args...))
-	if f.OnRun != nil {
-		return f.OnRun(name, args)
+	on := f.OnRun
+	f.mu.Unlock()
+	if on != nil {
+		return on(name, args)
 	}
 	return nil, nil
 }

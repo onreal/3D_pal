@@ -123,6 +123,27 @@ func (s *Service) Start(v project.Version) Result {
 	return Result{Project: v.Project, Version: v.Number, Status: "running", Parts: []Part{}}
 }
 
+// Get returns the finished assembly, building it now if needed (waits up to ctx's deadline).
+func (s *Service) Get(ctx context.Context, v project.Version) (Result, error) {
+	if r := s.Start(v); r.Status != "running" {
+		return r, nil
+	}
+	s.mu.Lock()
+	done, ok := s.inflight[v.Project+"/"+strconv.Itoa(v.Number)]
+	s.mu.Unlock()
+	if ok {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return Result{}, fmt.Errorf("the assembly is still building: %w", ctx.Err())
+		}
+	}
+	if r, ok := s.Cached(v); ok {
+		return r, nil
+	}
+	return s.Build(ctx, v), nil // a failed build is not cached; report it
+}
+
 // Wait blocks until a running build of v finishes (tests).
 func (s *Service) Wait(v project.Version) {
 	s.mu.Lock()
