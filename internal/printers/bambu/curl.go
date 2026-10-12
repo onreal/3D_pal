@@ -17,6 +17,15 @@ import (
 // native Go later without touching the Uploader interface.
 type CurlUploader struct {
 	Runner runner.Runner
+	Port   string // 990 when empty
+}
+
+func (u *CurlUploader) url(c Config, path string) string {
+	port := u.Port
+	if port == "" {
+		port = "990"
+	}
+	return fmt.Sprintf("ftps://%s:%s/%s", c.IP, port, path)
 }
 
 // curlArgs keeps the access code out of the command line: curl reads it from a
@@ -39,7 +48,7 @@ func (u *CurlUploader) Upload(ctx context.Context, c Config, localPath, remoteNa
 		return err
 	}
 	defer cleanup()
-	args = append(args, "-T", localPath, fmt.Sprintf("ftps://%s:990/%s", c.IP, filepath.Base(remoteName)))
+	args = append(args, "-T", localPath, u.url(c, filepath.Base(remoteName)))
 	_, err = u.Runner.Run(ctx, "curl", args...)
 	return mapCurl(err)
 }
@@ -50,14 +59,20 @@ func (u *CurlUploader) List(ctx context.Context, c Config) error {
 		return err
 	}
 	defer cleanup()
-	args = append(args, "--list-only", fmt.Sprintf("ftps://%s:990/", c.IP))
+	args = append(args, "--list-only", u.url(c, ""))
 	_, err = u.Runner.Run(ctx, "curl", args...)
 	return mapCurl(err)
 }
 
-var exitCode = regexp.MustCompile(`exit status (\d+)`)
+var (
+	exitCode = regexp.MustCompile(`exit status (\d+)`)
+	// FTP reply codes as curl prints them, e.g. "Access denied: 530" or "(25) ... 550";
+	// whole words only, so a port number such as 45307 doesn't read as reply 530.
+	replyAuth    = regexp.MustCompile(`\b530\b`)
+	replyStorage = regexp.MustCompile(`\b55[023]\b`)
+)
 
-// mapCurl turns curl's exit codes and FTP replies into shared printer errors.
+// mapCurl turns curl's exit codes (first) and FTP replies into shared printer errors.
 func mapCurl(err error) error {
 	if err == nil {
 		return nil
@@ -67,13 +82,20 @@ func mapCurl(err error) error {
 	if m := exitCode.FindStringSubmatch(msg); m != nil {
 		code, _ = strconv.Atoi(m[1])
 	}
-	switch {
-	case code == 67 || strings.Contains(msg, "530") || strings.Contains(msg, "Access denied"):
+	switch code {
+	case 67: // login denied
 		return fmt.Errorf("FTPS login: %w", printer.ErrAuth)
-	case code == 6 || code == 7 || code == 28 || code == 35:
+	case 6, 7, 28, 35: // can't resolve, can't connect, timeout, TLS connect error
 		return fmt.Errorf("FTPS connect: %w", printer.ErrUnreachable)
-	case code == 25 || strings.Contains(msg, "550") || strings.Contains(msg, "552") || strings.Contains(msg, "553"):
+	case 9, 25: // remote access denied, upload rejected (the A1 replies 550 without an SD card)
 		return fmt.Errorf("FTPS upload: %w", printer.ErrNoStorage)
+	case 0:
+		switch {
+		case replyAuth.MatchString(msg):
+			return fmt.Errorf("FTPS login: %w", printer.ErrAuth)
+		case replyStorage.MatchString(msg):
+			return fmt.Errorf("FTPS upload: %w", printer.ErrNoStorage)
+		}
 	}
 	return fmt.Errorf("FTPS: %s", strings.TrimSpace(msg))
 }

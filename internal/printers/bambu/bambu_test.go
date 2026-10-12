@@ -157,6 +157,9 @@ func TestCurlMapsErrors(t *testing.T) {
 		"curl failed: exit status 7\ncurl: (7) Failed to connect":        printer.ErrUnreachable,
 		"curl failed: exit status 28\ncurl: (28) Connection timed out":   printer.ErrUnreachable,
 		"curl failed: exit status 25\ncurl: (25) Failed FTP upload: 550": printer.ErrNoStorage,
+		// A port that contains 530 is not a login failure.
+		"curl failed: exit status 7\ncurl: (7) Failed to connect to 10.0.0.5 port 45307 after 0 ms: Connection refused": printer.ErrUnreachable,
+		"FTPS: 530 Login incorrect": printer.ErrAuth,
 	}
 	for msg, want := range cases {
 		f := &runner.Fake{OnRun: func(string, []string) ([]byte, error) { return nil, errors.New(msg) }}
