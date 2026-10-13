@@ -499,6 +499,45 @@ func (st *Store) SaveProfile(kind, name string, body []byte) (Profile, error) {
 	return p, st.Save(s)
 }
 
+// ProfileFileName turns a preset name into a valid profile file name
+// ("Bambu PLA Basic @BBL A1" → "Bambu PLA Basic BBL A1.json").
+func ProfileFileName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', strings.ContainsRune(" ._()+-", r):
+			b.WriteRune(r)
+		}
+	}
+	out := strings.Join(strings.Fields(b.String()), " ")
+	out = strings.TrimLeft(out, " ._()+-")
+	for strings.Contains(out, "..") {
+		out = strings.ReplaceAll(out, "..", ".")
+	}
+	if len(out) > 95 {
+		out = out[:95]
+	}
+	if out == "" {
+		out = "preset"
+	}
+	return out + ".json"
+}
+
+// SetProfilePrice sets a profile's price per kg.
+func (st *Store) SetProfilePrice(name string, price float64) (Profile, error) {
+	s, err := st.Load()
+	if err != nil {
+		return Profile{}, err
+	}
+	for i, p := range s.Profiles {
+		if p.Name == name {
+			s.Profiles[i].PricePerKg = price
+			return s.Profiles[i], st.Save(s)
+		}
+	}
+	return Profile{}, fmt.Errorf("no profile named %q", name)
+}
+
 // Bundle is the export file: settings with secrets, plus every profile file's contents.
 type Bundle struct {
 	Format   string            `json:"format"` // "printpipe-settings/1"

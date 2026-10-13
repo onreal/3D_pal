@@ -59,7 +59,7 @@ func Args(machine, process, filament, model, out string) []string {
 	}
 }
 
-var ErrNoProfiles = errors.New("slicer profiles missing: upload the machine, process and filament profiles on the settings page (http://localhost:8080/settings)")
+var ErrNoProfiles = errors.New("slicer profiles missing and Bambu Studio's system presets are not installed: upload the machine, process and filament profiles on the settings page (http://localhost:8080/settings)")
 
 func (s *Slicer) Slice(ctx context.Context, in slicer.Input) (slicer.Result, error) {
 	for _, k := range []string{slicer.ProfileMachine, slicer.ProfileProcess, slicer.ProfileFilament} {

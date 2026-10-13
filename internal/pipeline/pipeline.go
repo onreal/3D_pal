@@ -427,8 +427,10 @@ type PrinterInfo struct {
 	Default      bool                 `json:"default"`
 	Capabilities printer.Capabilities `json:"capabilities"`
 	Profiles     map[string]string    `json:"profiles"`
-	Status       *printer.Status      `json:"status,omitempty"`
-	Error        string               `json:"error,omitempty"`
+	// SystemProfiles names the slicer's own preset used for each kind left without a profile.
+	SystemProfiles map[string]string `json:"system_profiles,omitempty"`
+	Status         *printer.Status   `json:"status,omitempty"`
+	Error          string            `json:"error,omitempty"`
 }
 
 // Printers lists the configured printers; withStatus also asks each one for its state.
@@ -448,6 +450,16 @@ func (s *Service) Printers(ctx context.Context, withStatus bool) ([]PrinterInfo,
 			continue
 		}
 		info.Capabilities = p.Capabilities()
+		if sl, err := s.d.Slicers.Get(info.Capabilities.Slicer); err == nil {
+			for kind, pr := range s.systemDefaults(sl, info.Capabilities.Model) {
+				if cp.Profiles[kind] == "" {
+					if info.SystemProfiles == nil {
+						info.SystemProfiles = map[string]string{}
+					}
+					info.SystemProfiles[kind] = pr.Name
+				}
+			}
+		}
 		if withStatus && info.Capabilities.Has(printer.FeatureStatus) {
 			sctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			st, err := p.Status(sctx)
@@ -557,6 +569,20 @@ func (s *Service) estimateInput(set config.Settings, cp config.Printer, p printe
 	}
 	o = mergeOverrides(set.Slicer, o)
 	profiles := s.d.Config.ProfilePaths(cp)
+	price := 0.0
+	if prof, ok := set.Profile(cp.Profiles[slicer.ProfileFilament]); ok {
+		price = prof.PricePerKg
+	}
+	// A kind with no uploaded profile slices with the slicer's own default preset for this
+	// printer (Bambu Studio's A1 presets), so a new printer works without any setup.
+	for kind, pr := range s.systemDefaults(sl, caps.Model) {
+		if profiles[kind] == "" {
+			profiles[kind] = pr.Path
+			if kind == slicer.ProfileFilament {
+				price = pr.PricePerKg
+			}
+		}
+	}
 
 	h := sha256.New()
 	fmt.Fprintf(h, "slicer=%s\n", caps.Slicer)
@@ -575,10 +601,6 @@ func (s *Service) estimateInput(set config.Settings, cp config.Printer, p printe
 	ob, _ := json.Marshal(o)
 	h.Write(ob)
 
-	price := 0.0
-	if prof, ok := set.Profile(cp.Profiles[slicer.ProfileFilament]); ok {
-		price = prof.PricePerKg
-	}
 	in := estimates.Input{Project: v.Project, Version: v.Number, STLHash: v.STLHash, PrinterID: cp.ID,
 		ProfileHashes: hex.EncodeToString(h.Sum(nil)), PricePerKg: price, Currency: set.Currency}
 	out := filepath.Join(v.Dir, "slices", in.Key()[:12], project.Job)
@@ -586,6 +608,65 @@ func (s *Service) estimateInput(set config.Settings, cp config.Printer, p printe
 		return sl.Slice(ctx, slicer.Input{Model: v.Path(project.STL), OutPath: out, Profiles: profiles, Overrides: o})
 	}
 	return in, slice, nil
+}
+
+// systemDefaults is the slicer's default preset of each kind for a printer model, if it ships any.
+func (s *Service) systemDefaults(sl slicer.Slicer, model string) map[string]slicer.Preset {
+	src, ok := sl.(slicer.PresetSource)
+	if !ok {
+		return nil
+	}
+	return slicer.Defaults(src.Presets(model))
+}
+
+// SystemPresets lists the presets the printer's slicer ships for its model (empty when it ships none).
+func (s *Service) SystemPresets(printerID string) ([]slicer.Preset, error) {
+	set, err := s.d.Config.Load()
+	if err != nil {
+		return nil, err
+	}
+	_, p, err := s.printerFor(set, printerID)
+	if err != nil {
+		return nil, err
+	}
+	caps := p.Capabilities()
+	sl, err := s.d.Slicers.Get(caps.Slicer)
+	if err != nil {
+		return nil, err
+	}
+	src, ok := sl.(slicer.PresetSource)
+	if !ok {
+		return []slicer.Preset{}, nil
+	}
+	ps := src.Presets(caps.Model)
+	if ps == nil {
+		ps = []slicer.Preset{}
+	}
+	return ps, nil
+}
+
+// ImportPreset copies one of the printer's system presets into the uploaded profiles, so it
+// can be picked like an exported one; a filament keeps the maker's list price.
+func (s *Service) ImportPreset(printerID, kind, name string) (config.Profile, error) {
+	ps, err := s.SystemPresets(printerID)
+	if err != nil {
+		return config.Profile{}, err
+	}
+	for _, p := range ps {
+		if p.Kind != kind || p.Name != name {
+			continue
+		}
+		b, err := os.ReadFile(p.Path)
+		if err != nil {
+			return config.Profile{}, err
+		}
+		prof, err := s.d.Config.SaveProfile(kind, config.ProfileFileName(name), b)
+		if err != nil || p.PricePerKg == 0 || prof.PricePerKg != 0 { // keep a price the user set
+			return prof, err
+		}
+		return s.d.Config.SetProfilePrice(prof.Name, p.PricePerKg)
+	}
+	return config.Profile{}, &config.ValidationError{Problems: []string{fmt.Sprintf("%q is not a %s preset for this printer", name, kind)}}
 }
 
 // mergeOverrides applies the settings page defaults under the job's own overrides.

@@ -77,6 +77,7 @@ export interface PrinterInfo {
   default: boolean;
   capabilities: Capabilities;
   profiles: Record<string, string> | null;
+  system_profiles?: Record<string, string>; // the slicer's own preset used for each kind left empty
   status?: PrinterStatus;
   error?: string;
 }
@@ -115,6 +116,9 @@ export interface PrinterSettings {
 }
 
 export interface Profile { name: string; kind: string; price_per_kg?: number }
+
+/** A preset the slicer ships (Bambu Studio's system presets for the printer's model). */
+export interface Preset { kind: string; name: string; default: boolean; price_per_kg?: number }
 
 export interface Settings {
   printers: PrinterSettings[];
@@ -234,6 +238,8 @@ export const api = {
   printers: (status = true) => request<PrinterInfo[]>("GET", `/api/printers${status ? "" : "?status=0"}`),
   kinds: () => request<Kinds>("GET", "/api/printer-kinds"),
   testPrinter: (id: string) => request<{ ok: boolean; checks: Check[] }>("POST", `/api/printers/${enc(id)}/test`),
+  presets: (id: string) => request<Preset[]>("GET", `/api/printers/${enc(id)}/presets`),
+  importPreset: (id: string, kind: string, name: string) => request<Profile>("POST", `/api/printers/${enc(id)}/presets`, { kind, name }),
   cancel: (id: string) => request<{ ok: boolean }>("POST", `/api/printers/${enc(id)}/cancel`),
   settings: () => request<Settings>("GET", "/api/settings"),
   saveSettings: (s: Settings) => request<Settings>("PUT", "/api/settings", s),

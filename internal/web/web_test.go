@@ -9,6 +9,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -18,6 +20,7 @@ import (
 	"github.com/margarit/printpipe/internal/events"
 	"github.com/margarit/printpipe/internal/pipeline/pipelinetest"
 	_ "github.com/margarit/printpipe/internal/printers/bambu"
+	"github.com/margarit/printpipe/internal/slicer"
 	"github.com/margarit/printpipe/internal/web"
 )
 
@@ -437,5 +440,32 @@ func TestFrontendNotBuilt(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "not built") {
 		t.Fatalf("%s", body)
+	}
+}
+
+func TestSystemPresets(t *testing.T) {
+	f := setup(t)
+	path := filepath.Join(t.TempDir(), "petg.json")
+	os.WriteFile(path, []byte(`{"name":"Bambu PETG HF @BBL A1","from":"system"}`), 0o644)
+	f.env.Slicer.Shipped = []slicer.Preset{{Kind: "filament", Name: "Bambu PETG HF @BBL A1", Path: path, Default: true, PricePerKg: 25}}
+	resp, body := f.do(t, "GET", "/api/printers/sim/presets", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"name":"Bambu PETG HF @BBL A1"`) || strings.Contains(string(body), path) {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	resp, body = f.do(t, "POST", "/api/printers/sim/presets", []byte(`{"kind":"filament","name":"Bambu PETG HF @BBL A1"}`), nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"name":"Bambu PETG HF BBL A1.json"`) || !strings.Contains(string(body), `"price_per_kg":25`) {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	resp, body = f.do(t, "POST", "/api/printers/sim/presets", []byte(`{"kind":"filament","name":"nope"}`), nil)
+	if resp.StatusCode != 400 {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	resp, _ = f.do(t, "POST", "/api/printers/sim/presets", []byte(`not json`), nil)
+	if resp.StatusCode != 400 {
+		t.Fatalf("%d", resp.StatusCode)
+	}
+	resp, _ = f.do(t, "GET", "/api/printers/nope/presets", nil, nil)
+	if resp.StatusCode != 404 {
+		t.Fatalf("%d", resp.StatusCode)
 	}
 }

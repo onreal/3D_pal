@@ -20,6 +20,9 @@ type Library struct {
 	once  sync.Once
 	index map[string]map[string]string // kind → preset name → file
 	err   error
+
+	catMu sync.Mutex
+	cats  map[string]*catalogue // printer model → its presets
 }
 
 func NewLibrary(root string) *Library { return &Library{root: root} }

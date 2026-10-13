@@ -352,3 +352,91 @@ func TestRunsCutOffByARestartAreMarked(t *testing.T) {
 		t.Fatalf("%+v", runs)
 	}
 }
+
+// shipPresets gives the test slicer three default presets and one more filament, as files.
+func shipPresets(t *testing.T, e *env) {
+	dir := t.TempDir()
+	preset := func(kind, name string, def bool, price float64) slicer.Preset {
+		path := filepath.Join(dir, name+".json")
+		os.WriteFile(path, []byte(`{"name":"`+name+`","from":"system","instantiation":"true"}`), 0o644)
+		return slicer.Preset{Kind: kind, Name: name, Path: path, Default: def, PricePerKg: price}
+	}
+	e.Slicer.Shipped = []slicer.Preset{
+		preset("machine", "Bambu Lab A1 0.4 nozzle", true, 0),
+		preset("process", "0.20mm Standard @BBL A1", true, 0),
+		preset("filament", "Bambu PLA Basic @BBL A1", true, 20),
+		preset("filament", "Bambu PETG HF @BBL A1", false, 25),
+	}
+}
+
+func TestPrinterWithoutProfilesSlicesWithTheShippedDefaults(t *testing.T) {
+	e := newEnv(t)
+	shipPresets(t, e)
+	e.Svc.Compile(ctx, "cube", cube, nil)
+	ests, err := e.Svc.Estimate(ctx, "cube", []int{1}, "", slicer.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.Slicer.Last().Profiles
+	for kind, name := range map[string]string{"machine": "Bambu Lab A1 0.4 nozzle", "process": "0.20mm Standard @BBL A1", "filament": "Bambu PLA Basic @BBL A1"} {
+		if filepath.Base(got[kind]) != name+".json" {
+			t.Errorf("%s profile = %q", kind, got[kind])
+		}
+	}
+	if ests[0].Cost == 0 {
+		t.Error("no cost from the default filament's list price")
+	}
+	ps, _ := e.Svc.Printers(ctx, false)
+	if ps[0].SystemProfiles["filament"] != "Bambu PLA Basic @BBL A1" {
+		t.Errorf("printer info: %+v", ps[0].SystemProfiles)
+	}
+
+	// An uploaded profile wins over the default of its kind; the others stay.
+	if _, err := e.Config.SaveProfile("filament", "Mine.json", []byte(`{"name":"Mine"}`)); err != nil {
+		t.Fatal(err)
+	}
+	set, _ := e.Config.Load()
+	set.Printers[0].Profiles = map[string]string{"filament": "Mine.json"}
+	if err := e.Config.Save(set); err != nil {
+		t.Fatal(err)
+	}
+	e.Svc.Estimate(ctx, "cube", []int{1}, "", slicer.Overrides{})
+	got = e.Slicer.Last().Profiles
+	if filepath.Base(got["filament"]) != "Mine.json" || filepath.Base(got["machine"]) != "Bambu Lab A1 0.4 nozzle.json" {
+		t.Errorf("profiles = %v", got)
+	}
+	ps, _ = e.Svc.Printers(ctx, false)
+	if _, ok := ps[0].SystemProfiles["filament"]; ok || ps[0].SystemProfiles["process"] == "" {
+		t.Errorf("printer info: %+v", ps[0].SystemProfiles)
+	}
+}
+
+func TestImportPreset(t *testing.T) {
+	e := newEnv(t)
+	shipPresets(t, e)
+	ps, err := e.Svc.SystemPresets("")
+	if err != nil || len(ps) != 4 {
+		t.Fatalf("%v %v", ps, err)
+	}
+	prof, err := e.Svc.ImportPreset("sim", "filament", "Bambu PETG HF @BBL A1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prof.Name != "Bambu PETG HF BBL A1.json" || prof.Kind != "filament" || prof.PricePerKg != 25 {
+		t.Fatalf("%+v", prof)
+	}
+	set, _ := e.Config.Load()
+	if p, ok := set.Profile(prof.Name); !ok || p.PricePerKg != 25 {
+		t.Fatalf("%+v", set.Profiles)
+	}
+	// Importing again keeps a price the user changed.
+	e.Config.SetProfilePrice(prof.Name, 30)
+	if again, _ := e.Svc.ImportPreset("sim", "filament", "Bambu PETG HF @BBL A1"); again.PricePerKg != 30 {
+		t.Fatalf("%+v", again)
+	}
+	for _, bad := range [][2]string{{"filament", "Nope"}, {"process", "Bambu PETG HF @BBL A1"}} {
+		if _, err := e.Svc.ImportPreset("sim", bad[0], bad[1]); err == nil {
+			t.Errorf("imported %v", bad)
+		}
+	}
+}

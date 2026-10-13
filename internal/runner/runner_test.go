@@ -29,3 +29,14 @@ func TestFakeRecordsCalls(t *testing.T) {
 		t.Fatalf("got %v", f.Calls)
 	}
 }
+
+func TestExecRunLogKeepsBothStreams(t *testing.T) {
+	out, errOut, err := runner.Exec{}.RunLog(context.Background(), "sh", "-c", "echo out; echo warn >&2")
+	if err != nil || strings.TrimSpace(string(out)) != "out" || strings.TrimSpace(string(errOut)) != "warn" {
+		t.Fatalf("%q %q %v", out, errOut, err)
+	}
+	_, _, err = runner.Exec{}.RunLog(context.Background(), "sh", "-c", "printf '%3000s' x | tr ' ' y >&2; exit 2")
+	if err == nil || !strings.Contains(err.Error(), "sh failed") || len(err.Error()) > 2100 {
+		t.Fatalf("error not trimmed: %d bytes", len(err.Error()))
+	}
+}

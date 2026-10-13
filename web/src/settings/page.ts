@@ -1,4 +1,4 @@
-import { ApiError, MASK, api, type Field, type Kinds, type PrinterSettings, type Profile, type Settings } from "../api";
+import { ApiError, MASK, api, type Field, type Kinds, type Preset, type PrinterSettings, type Profile, type Settings } from "../api";
 import { download, h, replace, toast } from "../dom";
 
 /** A printer ID from its name: lowercase letters, digits and dashes. */
@@ -17,6 +17,7 @@ export class SettingsPage {
   private s!: Settings;
   private kinds!: Kinds;
   private saved = "";
+  private presets: Record<string, Preset[]> = {}; // printer ID → the presets its slicer ships
   private errors = h("div", { class: "form-errors", role: "alert" });
 
   async load() {
@@ -28,6 +29,9 @@ export class SettingsPage {
       return;
     }
     this.saved = JSON.stringify(this.s);
+    // Saved printers only: the server builds the printer to know its model.
+    const lists = await Promise.all(this.s.printers.map((p) => api.presets(p.id).catch(() => [] as Preset[])));
+    this.presets = Object.fromEntries(this.s.printers.map((p, i) => [p.id, lists[i]!]));
     this.render();
   }
 
@@ -148,9 +152,35 @@ export class SettingsPage {
 
   private profilePicker(p: PrinterSettings, kind: string) {
     const options = this.s.profiles.filter((x) => x.kind === kind);
-    const sel = h("select", { onchange: (e: Event) => { p.profiles[kind] = (e.target as HTMLSelectElement).value; } },
-      h("option", { value: "" }, "— none —"),
-      ...options.map((o) => h("option", { value: o.name, selected: p.profiles?.[kind] === o.name }, o.name)));
+    const shipped = (this.presets[p.id] ?? []).filter((x) => x.kind === kind);
+    const def = shipped.find((x) => x.default);
+    const sel = h("select", { "data-testid": `profile-${p.id}-${kind}` },
+      h("option", { value: "" }, def ? `Bambu Studio default: ${def.name}` : "— none —"),
+      options.length ? h("optgroup", { label: "Uploaded" },
+        ...options.map((o) => h("option", { value: o.name, selected: p.profiles?.[kind] === o.name }, o.name))) : null,
+      shipped.length ? h("optgroup", { label: "From Bambu Studio" },
+        ...shipped.map((o) => h("option", { value: `preset:${o.name}` }, o.name + (o.default ? " (default)" : "")))) : null);
+    sel.addEventListener("change", async () => {
+      const v = sel.value;
+      if (!v.startsWith("preset:")) {
+        p.profiles[kind] = v;
+        return;
+      }
+      // A shipped preset becomes an uploaded profile, then the printer uses it.
+      try {
+        if (this.dirty()) await this.save(true);
+        const prof = await api.importPreset(p.id, kind, v.slice("preset:".length));
+        const set = await api.settings();
+        set.printers.find((x) => x.id === p.id)!.profiles[kind] = prof.name;
+        this.s = set;
+        await this.save(true);
+        toast(`${PROFILE_LABELS[kind]} profile: ${prof.name}.`, "ok");
+        await this.load();
+      } catch (e) {
+        toast((e as Error).message, "error");
+        sel.value = p.profiles?.[kind] ?? "";
+      }
+    });
     return h("label", {}, `${PROFILE_LABELS[kind]} profile`, sel);
   }
 
@@ -180,7 +210,7 @@ export class SettingsPage {
     });
     return h("section", { class: "card" },
       h("h2", {}, "Slicer"),
-      h("p", { class: "muted small" }, "Export the A1 machine, process and filament presets from Bambu Studio as JSON and upload them here. Without them the slicer falls back to defaults that are not A1 settings."),
+      h("p", { class: "muted small" }, "Nothing to export: printers slice with the A1 presets that ship inside Bambu Studio (0.4 mm nozzle, 0.20mm Standard, Bambu PLA Basic). Pick another nozzle, process or filament from the list on each printer. Upload JSON only for presets you changed yourself in Bambu Studio."),
       h("div", { class: "grid3" }, ...uploads),
       h("h3", {}, "Defaults for every job"),
       h("div", { class: "grid2" },

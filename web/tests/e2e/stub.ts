@@ -22,6 +22,15 @@ export const estimate = {
   layers: 100, layer_height_mm: 0.2, supports: false, cost: 0.19, currency: "EUR", computed_at: "2026-10-12T10:00:00Z", key: "k1",
 };
 
+export const presets = [
+  { kind: "machine", name: "Bambu Lab A1 0.4 nozzle", default: true },
+  { kind: "machine", name: "Bambu Lab A1 0.2 nozzle", default: false },
+  { kind: "process", name: "0.20mm Standard @BBL A1", default: true },
+  { kind: "process", name: "0.12mm Fine @BBL A1", default: false },
+  { kind: "filament", name: "Bambu PLA Basic @BBL A1", default: true, price_per_kg: 19.99 },
+  { kind: "filament", name: "Bambu PETG HF @BBL A1", default: false, price_per_kg: 25 },
+];
+
 export const settings = {
   printers: [{ id: "a1", name: "Workshop A1", kind: "bambu-lan", default: true, config: { ip: "192.168.1.50", serial: "03919C", access_code: "••••••••" }, profiles: {} }],
   profiles: [],
@@ -93,6 +102,11 @@ export async function stubApi(page: Page, opts: StubOptions = {}) {
     }
     if (path.startsWith("/api/sessions/") && req.method() === "DELETE") return json(route, { ok: true });
     if (path === "/api/printers") return json(route, [A1]);
+    if (path === "/api/printers/a1/presets" && req.method() === "GET") return json(route, presets);
+    if (path === "/api/printers/a1/presets" && req.method() === "POST") {
+      const { kind, name } = JSON.parse(req.postData() ?? "{}");
+      return json(route, { kind, name: `${name.replace(/@/g, "").replace(/ +/g, " ")}.json`, price_per_kg: 25 });
+    }
     if (path === "/api/projects") return json(route, [{ name: "cube", latest_version: 1, updated_at: "2026-10-12T10:00:00Z" }]);
     if (path === "/api/projects/cube/versions") return json(route, [{ version: 1, params: { size }, created_at: "2026-10-12T10:00:00Z", size_mm: { X: size, Y: size, Z: size }, estimates: [] }]);
     if (path === "/api/projects/cube/model.stl") return route.fulfill({ status: 200, contentType: "model/stl", body: cubeSTL(size) });

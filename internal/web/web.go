@@ -110,6 +110,8 @@ func Handler(svc *pipeline.Service, cfg *config.Store, hub *events.Hub, assets f
 	mux.HandleFunc("GET /api/printers", s.printers)
 	mux.HandleFunc("GET /api/printer-kinds", s.printerKinds)
 	mux.HandleFunc("POST /api/printers/{id}/test", s.testPrinter)
+	mux.HandleFunc("GET /api/printers/{id}/presets", s.presets)
+	mux.HandleFunc("POST /api/printers/{id}/presets", s.importPreset)
 	mux.HandleFunc("POST /api/printers/{id}/cancel", s.cancel)
 	mux.HandleFunc("GET /api/runs", s.runs)
 
@@ -624,6 +626,34 @@ func (s *Server) uploadProfile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p, err := s.cfg.SaveProfile(kind, name, body)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, p)
+}
+
+// presets lists the profiles the printer's slicer ships (Bambu Studio's system presets).
+func (s *Server) presets(w http.ResponseWriter, r *http.Request) {
+	ps, err := s.svc.SystemPresets(r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, ps)
+}
+
+// importPreset copies a system preset into the uploaded profiles: {"kind", "name"}.
+func (s *Server) importPreset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	p, err := s.svc.ImportPreset(r.PathValue("id"), req.Kind, req.Name)
 	if err != nil {
 		fail(w, err)
 		return

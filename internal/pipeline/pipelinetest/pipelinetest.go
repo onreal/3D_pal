@@ -59,19 +59,28 @@ func (r *Recorder) Has(typ string) bool {
 	return false
 }
 
-// CountingSlicer is the fake slicer, counting slices.
+// CountingSlicer is the fake slicer, counting slices. Shipped stands in for the presets a
+// real slicer ships (Bambu Studio's system presets).
 type CountingSlicer struct {
 	fakeslicer.Slicer
-	mu    sync.Mutex
-	calls int
+	Shipped []slicer.Preset
+	mu      sync.Mutex
+	calls   int
+	last    slicer.Input
 }
 
 func (c *CountingSlicer) Slice(ctx context.Context, in slicer.Input) (slicer.Result, error) {
 	c.mu.Lock()
 	c.calls++
+	c.last = in
 	c.mu.Unlock()
 	return c.Slicer.Slice(ctx, in)
 }
+
+func (c *CountingSlicer) Presets(model string) []slicer.Preset { return c.Shipped }
+
+// Last is the input of the latest slice.
+func (c *CountingSlicer) Last() slicer.Input { c.mu.Lock(); defer c.mu.Unlock(); return c.last }
 
 func (c *CountingSlicer) Calls() int { c.mu.Lock(); defer c.mu.Unlock(); return c.calls }
 

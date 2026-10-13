@@ -53,6 +53,34 @@ type Slicer interface {
 	Slice(ctx context.Context, in Input) (Result, error)
 }
 
+// Preset is a profile the slicer ships with (Bambu Studio's system presets).
+type Preset struct {
+	Kind       string  `json:"kind"` // ProfileMachine, ProfileProcess, ProfileFilament
+	Name       string  `json:"name"`
+	Path       string  `json:"-"`
+	Default    bool    `json:"default"`                // used when a printer has no profile of this kind
+	PricePerKg float64 `json:"price_per_kg,omitempty"` // the maker's list price, filaments only
+}
+
+// PresetSource is implemented by a slicer that ships its own profiles: a printer with no
+// uploaded profile of a kind slices with the default preset for its model.
+type PresetSource interface {
+	Presets(model string) []Preset
+}
+
+// Defaults picks the default preset of each kind.
+func Defaults(ps []Preset) map[string]Preset {
+	out := map[string]Preset{}
+	for _, p := range ps {
+		if p.Default {
+			if _, dup := out[p.Kind]; !dup {
+				out[p.Kind] = p
+			}
+		}
+	}
+	return out
+}
+
 type Deps struct {
 	Runner runner.Runner
 }

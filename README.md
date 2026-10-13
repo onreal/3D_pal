@@ -35,8 +35,11 @@ Silicon, turn on "Use Rosetta for x86_64/amd64 emulation" in Docker Desktop sett
 ```
 
 Then, in <http://localhost:8080/settings>: add the printer (IP, serial, LAN access
-code), upload the A1 machine, process and filament profiles exported from Bambu Studio,
-and click **Test connection**. The printer must be in LAN Only mode with Developer Mode
+code) and click **Test connection**. There are no slicer profiles to export: the printer
+slices with the A1 presets that ship inside Bambu Studio in the image (0.4 mm nozzle,
+0.20mm Standard, Bambu PLA Basic, with its list price for costs). Pick another nozzle,
+process or filament from the printer's profile lists, which offer every A1 preset
+Bambu Studio has. Upload JSON only for presets you changed yourself. The printer must be in LAN Only mode with Developer Mode
 on, with a microSD card inserted. No printer yet? `./printpipe.sh up --demo` adds a
 simulated printer and slicer.
 

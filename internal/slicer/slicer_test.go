@@ -35,3 +35,15 @@ func TestKindsSortedAndDuplicatePanics(t *testing.T) {
 	}()
 	slicer.Register(slicer.Driver{Kind: "aaa", New: func(slicer.Deps) slicer.Slicer { return stub{} }})
 }
+
+func TestDefaultsPicksTheFirstDefaultOfEachKind(t *testing.T) {
+	d := slicer.Defaults([]slicer.Preset{
+		{Kind: "machine", Name: "m1", Default: true},
+		{Kind: "machine", Name: "m2", Default: true},
+		{Kind: "process", Name: "p1"},
+		{Kind: "filament", Name: "f1", Default: true},
+	})
+	if len(d) != 2 || d["machine"].Name != "m1" || d["filament"].Name != "f1" {
+		t.Fatalf("%v", d)
+	}
+}

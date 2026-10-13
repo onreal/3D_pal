@@ -89,3 +89,49 @@ func TestRealBambuStudioOverride(t *testing.T) {
 		t.Fatalf("layers %d at %g mm, want 99 at 0.1", res.Layers, res.LayerHeight)
 	}
 }
+
+// The real BBL folder offers the A1's own presets, and slicing with only the defaults (what a
+// printer with no uploaded profiles does) works.
+func TestRealSystemPresetsForTheA1(t *testing.T) {
+	s := bambustudio.New(runner.Exec{}, os.Getenv("BAMBU_STUDIO"))
+	ps := s.Presets("Bambu Lab A1")
+	count := map[string]int{}
+	for _, p := range ps {
+		count[p.Kind]++
+	}
+	t.Logf("%d presets: %v", len(ps), count)
+	if count[slicer.ProfileMachine] < 4 || count[slicer.ProfileProcess] < 5 || count[slicer.ProfileFilament] < 20 {
+		t.Fatalf("too few A1 presets: %v", count)
+	}
+	d := slicer.Defaults(ps)
+	want := map[string]string{slicer.ProfileMachine: "Bambu Lab A1 0.4 nozzle", slicer.ProfileProcess: "0.20mm Standard @BBL A1", slicer.ProfileFilament: "Bambu PLA Basic @BBL A1"}
+	for kind, name := range want {
+		if d[kind].Name != name {
+			t.Errorf("default %s = %q, want %q", kind, d[kind].Name, name)
+		}
+	}
+	if d[slicer.ProfileFilament].PricePerKg <= 0 {
+		t.Errorf("no list price for %s", d[slicer.ProfileFilament].Name)
+	}
+	for _, p := range ps {
+		if p.Name == "Bambu Lab A1 mini 0.4 nozzle" {
+			t.Error("the A1 mini is another model")
+		}
+	}
+
+	dir := t.TempDir()
+	stl := filepath.Join(dir, "model.stl")
+	os.WriteFile(stl, mesh.Cube(20, 20, 20), 0o644)
+	profiles := map[string]string{}
+	for kind, p := range d {
+		profiles[kind] = p.Path
+	}
+	res, err := s.Slice(context.Background(), slicer.Input{Model: stl, OutPath: filepath.Join(dir, "slice", "job.gcode.3mf"), Profiles: profiles})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%+v", res)
+	if res.Layers != 100 || len(res.Filaments) != 1 || res.Filaments[0].Type != "PLA" || res.Filaments[0].Grams < 2 {
+		t.Errorf("%+v", res)
+	}
+}

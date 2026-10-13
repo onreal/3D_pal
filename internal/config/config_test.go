@@ -260,3 +260,17 @@ func TestImportRejectsBrokenBundles(t *testing.T) {
 		t.Fatal("invalid settings imported")
 	}
 }
+
+func TestProfileFileName(t *testing.T) {
+	for in, want := range map[string]string{
+		"Bambu PLA Basic @BBL A1": "Bambu PLA Basic BBL A1.json",
+		"0.20mm Standard @BBL A1": "0.20mm Standard BBL A1.json",
+		"@@@":                     "preset.json",
+		"../x":                    "x.json",
+	} {
+		got := config.ProfileFileName(in)
+		if got != want || !config.ValidProfileName(got) {
+			t.Errorf("%q → %q, want %q", in, got, want)
+		}
+	}
+}
