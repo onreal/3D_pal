@@ -12,6 +12,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/margarit/printpipe/internal/printer"
 )
@@ -70,6 +71,9 @@ type Uploader interface {
 // MQTT sends commands to device/<serial>/request and reads device/<serial>/report.
 type MQTT interface {
 	Publish(ctx context.Context, c Config, payload []byte) error
+	// Command publishes a command and waits for the printer's answer: it echoes the command
+	// on the report topic with a result. ErrNoReply when it does not answer in time.
+	Command(ctx context.Context, c Config, payload []byte) (Reply, error)
 	// Report asks for a full status push and returns the "print" object of the reply.
 	Report(ctx context.Context, c Config) (Report, error)
 }
@@ -82,6 +86,37 @@ type Report struct {
 	TotalLayer  int     `json:"total_layer_num"`
 	PrintError  int     `json:"print_error"`
 	SubtaskName string  `json:"subtask_name"`
+}
+
+// Reply is the printer's answer to a command: the command echoed with its result.
+type Reply struct {
+	Command string `json:"command"`
+	Result  string `json:"result"` // "success" or "failed"
+	Reason  string `json:"reason"`
+	ErrCode int    `json:"err_code"`
+}
+
+// ErrNoReply means the printer did not answer a command; it may still have run it.
+var ErrNoReply = errors.New("the printer did not answer the command")
+
+// errVerifyFailed is the A1's code for a command its firmware would not verify: since the
+// 2025 authorization update it takes print commands from software other than Bambu's own
+// only in Developer Mode.
+const errVerifyFailed = 84033543
+
+// refused explains a command the printer turned down.
+func refused(r Reply) error {
+	if r.ErrCode == errVerifyFailed || strings.Contains(strings.ToLower(r.Reason), "verif") {
+		return fmt.Errorf("%w: the printer's firmware only takes print commands from Bambu's own software unless Developer Mode is on. On the A1: Settings, turn on LAN Only Mode, then Developer Mode; then send the job again (printer: %q)", printer.ErrRefused, r.Reason)
+	}
+	msg := r.Reason
+	if msg == "" {
+		msg = "no reason given"
+	}
+	if r.ErrCode != 0 {
+		msg += fmt.Sprintf(" (code %d)", r.ErrCode)
+	}
+	return fmt.Errorf("%w: %s", printer.ErrRefused, msg)
 }
 
 type Option func(*Printer)
@@ -209,7 +244,37 @@ func (p *Printer) Start(ctx context.Context, r printer.Remote) error {
 	if st, err := p.Status(ctx); err == nil && (st.State == printer.Printing || st.State == printer.Paused) {
 		return printer.ErrBusy
 	}
-	return p.mqtt.Publish(ctx, p.cfg, StartPayload(r.ID))
+	reply, err := p.mqtt.Command(ctx, p.cfg, StartPayload(r.ID))
+	switch {
+	case errors.Is(err, ErrNoReply):
+		// Some firmware does not echo the command: the print starting is the answer.
+		return p.awaitStart(ctx)
+	case err != nil:
+		return err
+	case !strings.EqualFold(reply.Result, "success"):
+		return refused(reply)
+	}
+	return nil
+}
+
+// StartWait is how long Start watches for a print to begin when the printer sends no reply.
+var StartWait = 30 * time.Second
+
+func (p *Printer) awaitStart(ctx context.Context) error {
+	deadline := time.Now().Add(StartWait)
+	for {
+		if st, err := p.Status(ctx); err == nil && (st.State == printer.Printing || st.State == printer.Paused) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w: it did not answer the start command and is not printing; check the printer's screen for a message", printer.ErrRefused)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 func (p *Printer) Status(ctx context.Context) (printer.Status, error) {

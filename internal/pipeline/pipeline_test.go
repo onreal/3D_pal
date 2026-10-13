@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -438,5 +439,50 @@ func TestImportPreset(t *testing.T) {
 		if _, err := e.Svc.ImportPreset("sim", bad[0], bad[1]); err == nil {
 			t.Errorf("imported %v", bad)
 		}
+	}
+}
+
+func TestConcurrentSendsPrintOnce(t *testing.T) {
+	e := newEnv(t)
+	a := mustRequestApproval(t, e, "cube")
+	e.Svc.Approve(a.Job.ID)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	ok := 0
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := e.Svc.Print(ctx, a.Job.ID)
+			if err == nil {
+				mu.Lock()
+				ok++
+				mu.Unlock()
+			} else if !errors.Is(err, pipeline.ErrSending) && !errors.Is(err, jobs.ErrPrinted) {
+				t.Errorf("unexpected %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if ok != 1 || e.Printer.Starts() != 1 {
+		t.Fatalf("sent %d times, %d starts", ok, e.Printer.Starts())
+	}
+}
+
+func TestRefusedStartIsNotPrinted(t *testing.T) {
+	e := newEnv(t)
+	a := mustRequestApproval(t, e, "cube")
+	e.Svc.Approve(a.Job.ID)
+	e.Printer.RefuseStart(printer.ErrRefused)
+	if _, err := e.Svc.Print(ctx, a.Job.ID); !errors.Is(err, printer.ErrRefused) {
+		t.Fatalf("got %v", err)
+	}
+	if j, _ := e.Svc.Job(a.Job.ID); j.Printed {
+		t.Fatal("a refused job was marked printed")
+	}
+	// Once the printer accepts (Developer Mode on), the same approved job sends.
+	e.Printer.RefuseStart(nil)
+	if _, err := e.Svc.Print(ctx, a.Job.ID); err != nil {
+		t.Fatal(err)
 	}
 }

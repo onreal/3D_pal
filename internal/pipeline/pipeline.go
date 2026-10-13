@@ -61,6 +61,9 @@ type Service struct {
 	watchMu  sync.Mutex
 	watching map[string]context.CancelFunc
 	locks    sync.Map // project name → *sync.Mutex
+
+	sendMu  sync.Mutex
+	sending map[string]bool // job IDs being sent to a printer
 }
 
 func New(d Deps) *Service {
@@ -972,6 +975,11 @@ func (s *Service) Print(ctx context.Context, jobID string) (PrintResult, error) 
 		if getErr != nil {
 			return getErr
 		}
+		// One send at a time per job: a double click or a second tab must not print twice.
+		if !s.claim(job.ID) {
+			return ErrSending
+		}
+		defer s.release(job.ID)
 		if err := s.d.Jobs.CheckPrintable(job.ID, job.FilePath); err != nil {
 			return err
 		}
@@ -1024,6 +1032,28 @@ func (s *Service) Print(ctx context.Context, jobID string) (PrintResult, error) 
 		return nil
 	})
 	return res, err
+}
+
+// ErrSending means the job is being sent to its printer right now.
+var ErrSending = errors.New("this job is being sent to the printer right now")
+
+func (s *Service) claim(jobID string) bool {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	if s.sending[jobID] {
+		return false
+	}
+	if s.sending == nil {
+		s.sending = map[string]bool{}
+	}
+	s.sending[jobID] = true
+	return true
+}
+
+func (s *Service) release(jobID string) {
+	s.sendMu.Lock()
+	delete(s.sending, jobID)
+	s.sendMu.Unlock()
 }
 
 // watch polls a printer's status during a print and publishes it to the viewer (PRD FR-14, V-14).

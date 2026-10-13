@@ -264,6 +264,15 @@ print** sends it. **Approve only** leaves it for the agent's `print_job`, and **
 printer** sends an approved job later. A job prints once: **Print again** on a printed job
 slices a new job for the same version, which you approve the same way.
 
+**"MQTT verification failed, update studio to include the network plugin"** on the
+printer's screen, or "printer refused the command … Developer Mode" in the viewer: since
+Bambu's 2025 authorization firmware, the A1 takes print commands only from Bambu's own
+software unless **Developer Mode** is on. On the printer: Settings, turn on **LAN Only
+Mode**, then turn on **Developer Mode**. The access code may change; update it in Settings.
+Then press **Try again** on the job. The file is already on the SD card, and a refused job
+is not counted as printed. Developer Mode turns off Bambu's cloud and the Handy app for
+this printer.
+
 ## Layout
 
 ```

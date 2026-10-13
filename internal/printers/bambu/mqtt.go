@@ -84,6 +84,50 @@ func (m PahoMQTT) Publish(ctx context.Context, c Config, payload []byte) error {
 	return nil
 }
 
+// ReplyWait is how long Command waits for the printer's answer.
+var ReplyWait = 15 * time.Second
+
+func (m PahoMQTT) Command(ctx context.Context, c Config, payload []byte) (Reply, error) {
+	var sent struct {
+		Print struct {
+			Command string `json:"command"`
+		} `json:"print"`
+	}
+	json.Unmarshal(payload, &sent)
+	cl, err := m.connect(ctx, c)
+	if err != nil {
+		return Reply{}, err
+	}
+	defer cl.Disconnect(250)
+	got := make(chan Reply, 1)
+	// Subscribe before publishing, so the answer cannot be missed.
+	sub := cl.Subscribe("device/"+c.Serial+"/report", 0, func(_ paho.Client, msg paho.Message) {
+		var env struct {
+			Print *Reply `json:"print"`
+		}
+		if json.Unmarshal(msg.Payload(), &env) == nil && env.Print != nil && env.Print.Command == sent.Print.Command && env.Print.Result != "" {
+			select {
+			case got <- *env.Print:
+			default:
+			}
+		}
+	})
+	if err := wait(ctx, sub); err != nil {
+		return Reply{}, mapMQTT(err)
+	}
+	if err := wait(ctx, cl.Publish("device/"+c.Serial+"/request", 0, false, payload)); err != nil {
+		return Reply{}, mapMQTT(err)
+	}
+	select {
+	case r := <-got:
+		return r, nil
+	case <-ctx.Done():
+		return Reply{}, ctx.Err()
+	case <-time.After(ReplyWait):
+		return Reply{}, ErrNoReply
+	}
+}
+
 func (m PahoMQTT) Report(ctx context.Context, c Config) (Report, error) {
 	cl, err := m.connect(ctx, c)
 	if err != nil {

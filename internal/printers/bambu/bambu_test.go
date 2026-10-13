@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/margarit/printpipe/internal/printer"
 	"github.com/margarit/printpipe/internal/printer/printertest"
@@ -36,6 +37,22 @@ type fakeMQTT struct {
 	err       error
 	state     string
 	published [][]byte
+	reply     *bambu.Reply // the answer to a command; success when nil
+	noReply   bool
+}
+
+func (f *fakeMQTT) Command(ctx context.Context, c bambu.Config, p []byte) (bambu.Reply, error) {
+	if f.reply != nil && f.reply.Result != "success" {
+		f.published = append(f.published, p)
+		return *f.reply, nil
+	}
+	if err := f.Publish(ctx, c, p); err != nil {
+		return bambu.Reply{}, err
+	}
+	if f.noReply {
+		return bambu.Reply{}, bambu.ErrNoReply
+	}
+	return bambu.Reply{Command: "project_file", Result: "success"}, nil
 }
 
 func (f *fakeMQTT) Publish(_ context.Context, _ bambu.Config, p []byte) error {
@@ -113,6 +130,45 @@ func TestUploadThenStartPublishesProjectFile(t *testing.T) {
 	if len(mq.published) != 1 || !strings.Contains(string(mq.published[0]), `"file:///sdcard/cube_v1.gcode.3mf"`) {
 		t.Fatalf("published %s", mq.published)
 	}
+}
+
+func TestStartRefusedByFirmwareExplainsDeveloperMode(t *testing.T) {
+	mq := &fakeMQTT{reply: &bambu.Reply{Command: "project_file", Result: "failed", Reason: "mqtt message verify failed", ErrCode: 84033543}}
+	p := bambu.New(cfg, bambu.WithUploader(&fakeFTPS{}), bambu.WithMQTT(mq))
+	r, _ := p.Upload(context.Background(), printer.Job{Path: "x", Name: "a.gcode.3mf"})
+	err := p.Start(context.Background(), r)
+	if !errors.Is(err, printer.ErrRefused) || !strings.Contains(err.Error(), "Developer Mode") {
+		t.Fatalf("got %v", err)
+	}
+	mq.reply = &bambu.Reply{Command: "project_file", Result: "failed", Reason: "file not found", ErrCode: 7}
+	err = p.Start(context.Background(), r)
+	if !errors.Is(err, printer.ErrRefused) || !strings.Contains(err.Error(), "file not found (code 7)") || strings.Contains(err.Error(), "Developer") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestStartWithoutReplyWatchesForThePrint(t *testing.T) {
+	defer func(d time.Duration) { bambu.StartWait = d }(bambu.StartWait)
+	bambu.StartWait = 0
+	mq := &fakeMQTT{noReply: true}
+	p := bambu.New(cfg, bambu.WithUploader(&fakeFTPS{}), bambu.WithMQTT(mq))
+	r, _ := p.Upload(context.Background(), printer.Job{Path: "x", Name: "a.gcode.3mf"})
+	if err := p.Start(context.Background(), r); err != nil { // the fake starts printing
+		t.Fatal(err)
+	}
+	quiet := &silentMQTT{fakeMQTT: fakeMQTT{noReply: true}}
+	p = bambu.New(cfg, bambu.WithUploader(&fakeFTPS{}), bambu.WithMQTT(quiet))
+	r, _ = p.Upload(context.Background(), printer.Job{Path: "x", Name: "a.gcode.3mf"})
+	if err := p.Start(context.Background(), r); !errors.Is(err, printer.ErrRefused) || !strings.Contains(err.Error(), "did not answer") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// silentMQTT takes the command but never starts printing.
+type silentMQTT struct{ fakeMQTT }
+
+func (s *silentMQTT) Command(context.Context, bambu.Config, []byte) (bambu.Reply, error) {
+	return bambu.Reply{}, bambu.ErrNoReply
 }
 
 func TestStartWhilePrintingIsBusy(t *testing.T) {

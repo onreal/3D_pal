@@ -8,6 +8,7 @@ export class JobPanel {
   private job: Job | null = null;
   private printerName = "";
   private requestedBy = "";
+  private sendError = ""; // why the last send failed, kept next to the button
   onShowToolpaths: (job: Job) => void = () => {};
 
   async load(project: string) {
@@ -29,7 +30,7 @@ export class JobPanel {
   /** Called for job events: a new request, or an approval made elsewhere. */
   show(a: Partial<Approval> & { job: Job; client?: string }) {
     const sameJob = this.job?.id === a.job.id;
-    if (!sameJob) this.requestedBy = "";
+    if (!sameJob) this.requestedBy = this.sendError = "";
     if (a.client) this.requestedBy = a.client;
     this.job = { ...(sameJob ? this.job : {}), ...a.job, estimate: a.estimate ?? a.job.estimate ?? this.job?.estimate };
     if (a.printer_name) this.printerName = a.printer_name;
@@ -52,6 +53,7 @@ export class JobPanel {
 
   private async send(job: Job, btn: HTMLButtonElement, approveFirst: boolean) {
     btn.disabled = true;
+    this.sendError = "";
     try {
       if (approveFirst) {
         btn.textContent = "Approving…";
@@ -62,7 +64,7 @@ export class JobPanel {
       this.job = { ...this.job!, ...r.job, printed: true };
       toast(`Printing on ${r.printer}.`, "ok");
     } catch (e) {
-      toast((e as Error).message, "error");
+      this.sendError = (e as Error).message;
     }
     this.render();
   }
@@ -92,7 +94,8 @@ export class JobPanel {
         button("Print again", "print-again", "", () => void this.request(job.project, job.version, job.printer_id, this.printerName)));
     } else if (job.approved) {
       action = h("div", { "data-testid": "approved" },
-        button("Send to printer", "send", "primary big", (b) => void this.send(job, b, false)),
+        this.sendError ? h("p", { class: "error", role: "alert", "data-testid": "send-error" }, this.sendError) : null,
+        button(this.sendError ? "Try again" : "Send to printer", "send", "primary big", (b) => void this.send(job, b, false)),
         h("p", { class: "muted small" }, "Approved. Send it now, or let the agent call print_job."));
     } else {
       action = h("div", {},

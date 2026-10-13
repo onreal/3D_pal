@@ -59,7 +59,12 @@ type Printer struct {
 	starts    int
 	started   time.Time
 	printing  bool
+	refuse    error
 }
+
+// RefuseStart makes Start fail with err after a successful upload, like a printer that turns
+// the start command down; nil accepts again.
+func (p *Printer) RefuseStart(err error) { p.mu.Lock(); p.refuse = err; p.mu.Unlock() }
 
 func New(opts ...Option) *Printer {
 	p := &Printer{printTime: time.Minute, now: time.Now, slicer: "bambustudio", uploaded: map[string]bool{}}
@@ -108,6 +113,9 @@ func (p *Printer) Start(_ context.Context, r printer.Remote) error {
 	defer p.mu.Unlock()
 	if !p.uploaded[r.ID] {
 		return fmt.Errorf("%s: %w", r.ID, printer.ErrNotUploaded)
+	}
+	if p.refuse != nil {
+		return p.refuse
 	}
 	if p.printing && p.now().Sub(p.started) < p.printTime {
 		return printer.ErrBusy

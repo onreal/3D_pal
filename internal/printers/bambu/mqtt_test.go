@@ -33,6 +33,8 @@ type fakeA1 struct {
 	mu       sync.Mutex
 	state    string
 	commands []string
+	verify   bool // reject print commands as unsigned, like firmware outside Developer Mode
+	silent   bool // never answer commands
 }
 
 func selfSigned(t *testing.T) tls.Certificate {
@@ -78,7 +80,18 @@ func startFakeA1(t *testing.T, serial, code string) *fakeA1 {
 		case msg.Print != nil:
 			a.commands = append(a.commands, msg.Print.Command)
 			if msg.Print.Command == "project_file" {
-				a.state = "RUNNING"
+				reply := map[string]any{"command": "project_file", "sequence_id": "0", "result": "success", "reason": ""}
+				if a.verify {
+					reply = map[string]any{"command": "project_file", "sequence_id": "0", "result": "failed", "reason": "mqtt message verify failed", "err_code": 84033543}
+				} else {
+					a.state = "RUNNING"
+				}
+				if !a.silent {
+					b, _ := json.Marshal(map[string]any{"print": reply})
+					a.mu.Unlock()
+					s.Publish("device/"+serial+"/report", b, false, 0)
+					return
+				}
 			}
 			if msg.Print.Command == "stop" {
 				a.state = "IDLE"
@@ -135,6 +148,32 @@ func TestPahoAgainstAPrinterLikeBroker(t *testing.T) {
 	a.mu.Unlock()
 	if got != "project_file,pause,resume,stop" {
 		t.Fatalf("commands %s", got)
+	}
+}
+
+func TestPahoUnsignedStartIsRefused(t *testing.T) {
+	a := startFakeA1(t, "SER123", "12345678")
+	a.verify = true
+	c := bambu.Config{IP: "127.0.0.1", Serial: "SER123", AccessCode: "12345678"}
+	p := bambu.New(c, bambu.WithUploader(&fakeFTPS{}), bambu.WithMQTT(bambu.PahoMQTT{Port: a.port}))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	r, _ := p.Upload(ctx, printer.Job{Path: "x", Name: "cube.gcode.3mf"})
+	err := p.Start(ctx, r)
+	if !errors.Is(err, printer.ErrRefused) || !strings.Contains(err.Error(), "Developer Mode") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestPahoCommandWithoutAnswer(t *testing.T) {
+	defer func(d time.Duration) { bambu.ReplyWait = d }(bambu.ReplyWait)
+	bambu.ReplyWait = 300 * time.Millisecond
+	a := startFakeA1(t, "SER123", "12345678")
+	a.silent = true
+	c := bambu.Config{IP: "127.0.0.1", Serial: "SER123", AccessCode: "12345678"}
+	_, err := bambu.PahoMQTT{Port: a.port}.Command(context.Background(), c, bambu.StartPayload("x.gcode.3mf"))
+	if !errors.Is(err, bambu.ErrNoReply) {
+		t.Fatalf("got %v", err)
 	}
 }
 

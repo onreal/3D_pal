@@ -94,6 +94,7 @@ var (
 	ErrNoStorage   = errors.New("printer storage missing or full")
 	ErrUnsupported = errors.New("not supported by this printer")
 	ErrNotUploaded = errors.New("that job was not uploaded to this printer")
+	ErrRefused     = errors.New("printer refused the command")
 )
 
 // Field describes one config value, so the settings page can render the driver's form.

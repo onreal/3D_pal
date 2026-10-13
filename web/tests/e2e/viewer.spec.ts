@@ -69,3 +69,14 @@ test("an approved job can be sent from the viewer", async ({ page }) => {
   await expect(page.locator(".job-panel")).toContainText("Sent to the printer.");
   expect(requests.filter((r) => r.method === "POST").map((r) => r.url)).toEqual(["/api/jobs/1a2b3c4d/print"]);
 });
+
+test("a refused send stays in the panel with Try again", async ({ page }) => {
+  const job = { id: "1a2b3c4d", project: "cube", version: 1, printer_id: "a1", approved: true, printed: false, estimate };
+  await stubApi(page, { jobs: [job] });
+  await page.route("**/api/jobs/1a2b3c4d/print", (route) => route.fulfill({ status: 502, contentType: "application/json",
+    body: JSON.stringify({ error: "printer refused the command: … unless Developer Mode is on …" }) }));
+  await page.goto("/");
+  await page.getByTestId("send").click();
+  await expect(page.getByTestId("send-error")).toContainText("Developer Mode");
+  await expect(page.getByTestId("send")).toHaveText("Try again");
+});
