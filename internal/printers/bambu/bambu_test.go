@@ -270,3 +270,17 @@ func TestStatusChannelDownOnALivePrinterIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestStartUnconfirmedWhenStatusIsUnreadable(t *testing.T) {
+	defer func(d time.Duration) { bambu.StartWait = d }(bambu.StartWait)
+	bambu.StartWait = 0
+	// Commands go out, but no status can be read: the start may well have worked.
+	quiet := &silentMQTT{fakeMQTT: fakeMQTT{err: printer.ErrUnreachable}}
+	p := bambu.New(cfg, bambu.WithUploader(&fakeFTPS{}), bambu.WithMQTT(quiet),
+		bambu.WithReachable(func(context.Context, string) bool { return true }))
+	r, _ := p.Upload(context.Background(), printer.Job{Path: "x", Name: "a.gcode.3mf"})
+	err := p.Start(context.Background(), r)
+	if !errors.Is(err, printer.ErrUnconfirmed) || errors.Is(err, printer.ErrRefused) || !strings.Contains(err.Error(), "picks the job up") {
+		t.Fatalf("got %v", err)
+	}
+}

@@ -565,3 +565,28 @@ func TestWatchRidesOutAStatusOutage(t *testing.T) {
 		t.Fatalf("states %v: want unknown during the outage, then printing again from the same watch", states)
 	}
 }
+
+func TestAPrintStartedWithoutConfirmationIsAdopted(t *testing.T) {
+	e := newEnv(t)
+	a := mustRequestApproval(t, e, "cube")
+	e.Svc.Approve(a.Job.ID)
+	// The start command reached the printer but its confirmation was lost: the job was
+	// never marked printed, yet the printer runs it.
+	r, _ := e.Printer.Upload(ctx, printer.Job{Path: a.Job.FilePath, Name: "cube_v1.gcode.3mf"})
+	if err := e.Printer.Start(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	ps, _ := e.Svc.Printers(ctx, true)
+	if ps[0].Job == nil || ps[0].Job.ID != a.Job.ID || !ps[0].Job.Printed {
+		t.Fatalf("running job not adopted: %+v", ps[0].Job)
+	}
+	if j, _ := e.Svc.Job(a.Job.ID); !j.Printed {
+		t.Fatal("adopted job not marked printed")
+	}
+	if !e.Events.Has("job") {
+		t.Fatal("no job event for the viewer's panel")
+	}
+	if pending, _ := e.Svc.PendingJobs("cube"); len(pending) != 0 {
+		t.Fatalf("adopted job still offered for sending: %+v", pending)
+	}
+}

@@ -190,7 +190,7 @@ func status(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, jobs.ErrPrinted), errors.Is(err, jobs.ErrDiscarded), errors.Is(err, printer.ErrBusy), errors.Is(err, config.ErrNoPrinter), errors.Is(err, jobs.ErrNotApproved), errors.Is(err, jobs.ErrFileChanged), errors.Is(err, pipeline.ErrSending):
 		return http.StatusConflict
-	case errors.Is(err, printer.ErrUnreachable), errors.Is(err, printer.ErrAuth), errors.Is(err, printer.ErrNoStorage), errors.Is(err, printer.ErrRefused):
+	case errors.Is(err, printer.ErrUnreachable), errors.Is(err, printer.ErrAuth), errors.Is(err, printer.ErrNoStorage), errors.Is(err, printer.ErrRefused), errors.Is(err, printer.ErrUnconfirmed):
 		return http.StatusBadGateway
 	}
 	return http.StatusInternalServerError

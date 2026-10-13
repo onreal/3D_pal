@@ -273,11 +273,18 @@ var StartWait = 30 * time.Second
 
 func (p *Printer) awaitStart(ctx context.Context) error {
 	deadline := time.Now().Add(StartWait)
+	seen := false // whether any status read worked
 	for {
-		if st, err := p.Status(ctx); err == nil && (st.State == printer.Printing || st.State == printer.Paused) {
+		st, err := p.Status(ctx)
+		if err == nil && (st.State == printer.Printing || st.State == printer.Paused) {
 			return nil
 		}
+		seen = seen || err == nil
 		if time.Now().After(deadline) {
+			if !seen {
+				return fmt.Errorf("%w: the start command was sent but the printer's status can't be read; check the printer's screen. "+
+					"If it is printing, the viewer picks the job up once its status is back", printer.ErrUnconfirmed)
+			}
 			return fmt.Errorf("%w: it did not answer the start command and is not printing; check the printer's screen for a message", printer.ErrRefused)
 		}
 		select {

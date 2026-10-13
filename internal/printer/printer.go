@@ -103,6 +103,9 @@ var (
 	ErrUnsupported = errors.New("not supported by this printer")
 	ErrNotUploaded = errors.New("that job was not uploaded to this printer")
 	ErrRefused     = errors.New("printer refused the command")
+	// ErrUnconfirmed: the start command went out, but the printer's status couldn't be read
+	// to see whether the print began.
+	ErrUnconfirmed = errors.New("could not confirm the print started")
 )
 
 // Field describes one config value, so the settings page can render the driver's form.

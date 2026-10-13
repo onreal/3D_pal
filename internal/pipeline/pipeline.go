@@ -1136,11 +1136,34 @@ func (s *Service) jobFor(printerID string, st printer.Status) (jobs.Job, bool) {
 		return jobs.Job{}, false
 	}
 	job, err = s.d.Jobs.LastPrinted(printerID, st.JobName[:i], v)
+	if errors.Is(err, jobs.ErrNotFound) {
+		job, err = s.adoptStarted(printerID, st.JobName[:i], v)
+	}
 	if err != nil {
 		return jobs.Job{}, false
 	}
 	s.setActive(printerID, job)
 	return job, true
+}
+
+// adoptStarted handles a print the printer runs from an approved job this server never saw
+// start: the start command went out but its confirmation was lost (a stuck status channel).
+// The printer running it is the confirmation, so the job is marked printed, which also
+// stops it being sent a second time.
+func (s *Service) adoptStarted(printerID, project string, version int) (jobs.Job, error) {
+	job, err := s.d.Jobs.LastApproved(printerID, project, version)
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	if err := s.d.Jobs.MarkPrinted(job.ID); err != nil {
+		return jobs.Job{}, err
+	}
+	if job, err = s.d.Jobs.Get(job.ID); err != nil {
+		return jobs.Job{}, err
+	}
+	slog.Info("print confirmed by printer status", "job", job.ID, "project", project, "version", version)
+	s.d.Events.Publish(events.Job, map[string]any{"job": job})
+	return job, nil
 }
 
 type watcher struct{ cancel context.CancelFunc }
