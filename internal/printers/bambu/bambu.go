@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/margarit/printpipe/internal/printer"
+	"github.com/margarit/printpipe/internal/slicer"
 )
 
 const Kind = "bambu-lan"
@@ -30,6 +31,8 @@ func init() {
 				Help: "Device info screen, or the label on the printer."},
 			{Key: "access_code", Label: "LAN access code", Type: "secret", Required: true,
 				Help: "Printer touchscreen → WLAN. Needs LAN Only mode and Developer Mode on."},
+			{Key: "plate", Label: "Build plate", Type: "select", Default: "Textured PEI Plate", Options: slicer.BedTypes,
+				Help: "The plate on the bed; it sets the bed temperature. The A1 ships with the Textured PEI Plate; High Temp Plate is the smooth PEI one."},
 		},
 		New: func(cfg map[string]string, deps printer.Deps) (printer.Printer, error) {
 			c := Config{IP: cfg["ip"], Serial: cfg["serial"], AccessCode: cfg["access_code"]}

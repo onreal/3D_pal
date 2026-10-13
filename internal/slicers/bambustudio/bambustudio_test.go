@@ -86,8 +86,8 @@ func profiles(t *testing.T) map[string]string {
 func TestOverridesChangeTheProcessPreset(t *testing.T) {
 	on, infill := true, 25
 	p := map[string]any{"enable_support": "0", "layer_height": "0.2"}
-	bambustudio.ApplyOverrides(p, slicer.Overrides{Supports: &on, SupportType: "tree(auto)", LayerHeight: 0.12, Infill: &infill})
-	if p["enable_support"] != "1" || p["support_type"] != "tree(auto)" || p["layer_height"] != "0.12" || p["sparse_infill_density"] != "25%" {
+	bambustudio.ApplyOverrides(p, slicer.Overrides{Supports: &on, SupportType: "tree(auto)", LayerHeight: 0.12, Infill: &infill, BedType: "Cool Plate"})
+	if p["enable_support"] != "1" || p["support_type"] != "tree(auto)" || p["layer_height"] != "0.12" || p["sparse_infill_density"] != "25%" || p["curr_bed_type"] != "Cool Plate" {
 		t.Fatalf("%v", p)
 	}
 	q := map[string]any{"layer_height": "0.2"}

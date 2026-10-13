@@ -91,7 +91,26 @@ func readPreset(path string) (map[string]any, error) {
 	return m, nil
 }
 
-// Flatten returns the preset at path with its whole "inherits" chain merged in.
+// DefaultBedType is the build plate a printer model ships with ("Textured PEI Plate" for
+// the A1), from its machine_model file; "" when unknown.
+func (l *Library) DefaultBedType(model string) string {
+	if model == "" || !l.Available() {
+		return ""
+	}
+	p, ok := l.find("machine", model)
+	if !ok {
+		return ""
+	}
+	m, err := readPreset(p)
+	if err != nil {
+		return ""
+	}
+	s, _ := m["default_bed_type"].(string)
+	return s
+}
+
+// Flatten returns the preset at path with its whole "inherits" chain merged in, and the
+// templates each preset includes.
 func (l *Library) Flatten(kind, path string) (map[string]any, error) {
 	leaf, err := readPreset(path)
 	if err != nil {
@@ -124,11 +143,32 @@ func (l *Library) Flatten(kind, path string) (map[string]any, error) {
 	}
 	out := map[string]any{}
 	for i := len(chain) - 1; i >= 0; i-- { // root first, the leaf last wins
+		// Bambu Studio 2 keeps long values such as the A1's start G-code in template presets
+		// that a preset pulls in with "include"; the preset's own keys win over them.
+		for _, name := range stringList(chain[i]["include"]) {
+			if !l.Available() {
+				return nil, fmt.Errorf("%s preset %s includes %q, but Bambu Studio's system presets are not installed", kind, filepath.Base(path), name)
+			}
+			p, ok := l.find(kind, name)
+			if !ok {
+				return nil, fmt.Errorf("%s preset %s includes %q, which is not one of this Bambu Studio's presets", kind, filepath.Base(path), name)
+			}
+			inc, err := readPreset(p)
+			if err != nil {
+				return nil, err
+			}
+			for k, v := range inc {
+				if k != "name" && k != "instantiation" && k != "from" && k != "type" {
+					out[k] = v
+				}
+			}
+		}
 		for k, v := range chain[i] {
 			out[k] = v
 		}
 	}
 	delete(out, "inherits")
+	delete(out, "include")
 	// Bambu Studio checks compatibility by preset name (a process lists the machines it
 	// suits), so the flattened preset takes the name of the nearest system preset it
 	// derives from; a user preset's own name would read as an unknown printer.

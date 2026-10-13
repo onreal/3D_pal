@@ -78,3 +78,33 @@ func TestPresetsUnknownModelOrNoLibrary(t *testing.T) {
 		t.Fatalf("got %v", ps)
 	}
 }
+
+func TestFlattenPullsInIncludedTemplates(t *testing.T) {
+	root := presetLibrary(t)
+	m := filepath.Join(root, "machine")
+	write(t, filepath.Join(m, "A1 template start.json"), `{"name":"A1 template start","instantiation":"false","machine_start_gcode":";===== machine: A1 =====","machine_end_gcode":"; template end"}`)
+	write(t, filepath.Join(m, "Bambu Lab A1.json"), `{"type":"machine_model","name":"Bambu Lab A1","default_bed_type":"Textured PEI Plate"}`)
+	write(t, filepath.Join(m, "fdm_machine_common.json"), `{"name":"fdm_machine_common","machine_start_gcode":"G28 ; generic"}`)
+	write(t, filepath.Join(m, "fdm_bbl_3dp_001_common.json"), `{"name":"fdm_bbl_3dp_001_common","inherits":"fdm_machine_common","from":"system","instantiation":"false"}`)
+	write(t, filepath.Join(m, "Bambu Lab A1 0.4 nozzle.json"), `{"type":"machine","name":"Bambu Lab A1 0.4 nozzle","inherits":"fdm_bbl_3dp_001_common","from":"system","instantiation":"true","printer_model":"Bambu Lab A1","include":["A1 template start"],"machine_end_gcode":"; own end"}`)
+	lib := bambustudio.NewLibrary(root)
+	got, err := lib.Flatten("machine", filepath.Join(m, "Bambu Lab A1 0.4 nozzle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The template beats the generic parent; the preset's own key beats the template.
+	if got["machine_start_gcode"] != ";===== machine: A1 =====" || got["machine_end_gcode"] != "; own end" || got["name"] != "Bambu Lab A1 0.4 nozzle" {
+		t.Fatalf("%v", got)
+	}
+	if _, ok := got["include"]; ok {
+		t.Fatal("include left in the flattened preset")
+	}
+	if lib.DefaultBedType("Bambu Lab A1") != "Textured PEI Plate" || lib.DefaultBedType("Nope") != "" || bambustudio.NewLibrary("").DefaultBedType("Bambu Lab A1") != "" {
+		t.Fatal("default bed type")
+	}
+
+	write(t, filepath.Join(m, "broken.json"), `{"type":"machine","name":"broken","include":["missing template"]}`)
+	if _, err := lib.Flatten("machine", filepath.Join(m, "broken.json")); err == nil {
+		t.Fatal("a missing include was ignored")
+	}
+}

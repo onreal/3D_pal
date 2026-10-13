@@ -584,6 +584,9 @@ func (s *Service) estimateInput(set config.Settings, cp config.Printer, p printe
 		return estimates.Input{}, nil, err
 	}
 	o = mergeOverrides(set.Slicer, o)
+	if o.BedType == "" {
+		o.BedType = cp.Config["plate"] // the plate set on the printer; empty = the model's default
+	}
 	profiles := s.d.Config.ProfilePaths(cp)
 	price := 0.0
 	if prof, ok := set.Profile(cp.Profiles[slicer.ProfileFilament]); ok {

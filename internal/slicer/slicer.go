@@ -23,7 +23,13 @@ type Overrides struct {
 	SupportType string  `json:"support_type,omitempty"` // "tree(auto)", "normal(auto)"
 	LayerHeight float64 `json:"layer_height,omitempty"` // mm
 	Infill      *int    `json:"infill,omitempty"`       // percent
+	// BedType is the build plate on the printer ("Textured PEI Plate"); it sets the bed
+	// temperature. Empty uses the printer model's default plate.
+	BedType string `json:"bed_type,omitempty"`
 }
+
+// BedTypes are the build plates Bambu Studio knows, by the name its presets use.
+var BedTypes = []string{"Textured PEI Plate", "High Temp Plate", "Cool Plate", "Engineering Plate", "Supertack Plate"}
 
 type Input struct {
 	Model     string            // STL path

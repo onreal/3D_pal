@@ -39,7 +39,10 @@ code) and click **Test connection**. There are no slicer profiles to export: the
 slices with the A1 presets that ship inside Bambu Studio in the image (0.4 mm nozzle,
 0.20mm Standard, Bambu PLA Basic, with its list price for costs). Pick another nozzle,
 process or filament from the printer's profile lists, which offer every A1 preset
-Bambu Studio has. Upload JSON only for presets you changed yourself. The printer must be in LAN Only mode with Developer Mode
+Bambu Studio has. Upload JSON only for presets you changed yourself.
+Set **Build plate** on the printer to the plate you use. It sets the bed temperature
+(PLA: 65 °C on Textured PEI or High Temp (smooth PEI), 35 °C on Cool Plate). The default
+is the Textured PEI Plate the A1 ships with. The printer must be in LAN Only mode with Developer Mode
 on, with a microSD card inserted. No printer yet? `./printpipe.sh up --demo` adds a
 simulated printer and slicer.
 

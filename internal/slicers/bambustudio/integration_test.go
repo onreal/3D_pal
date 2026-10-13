@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/margarit/printpipe/internal/mesh"
@@ -126,7 +127,8 @@ func TestRealSystemPresetsForTheA1(t *testing.T) {
 	for kind, p := range d {
 		profiles[kind] = p.Path
 	}
-	res, err := s.Slice(context.Background(), slicer.Input{Model: stl, OutPath: filepath.Join(dir, "slice", "job.gcode.3mf"), Profiles: profiles})
+	out := filepath.Join(dir, "slice", "job.gcode.3mf")
+	res, err := s.Slice(context.Background(), slicer.Input{Model: stl, OutPath: out, Profiles: profiles})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,4 +136,50 @@ func TestRealSystemPresetsForTheA1(t *testing.T) {
 	if res.Layers != 100 || len(res.Filaments) != 1 || res.Filaments[0].Type != "PLA" || res.Filaments[0].Grams < 2 {
 		t.Errorf("%+v", res)
 	}
+	// The A1's own start routine (from the included template), and the bed heated for the
+	// Textured PEI Plate the A1 ships with: 65 °C for PLA, not the Cool Plate's 35 °C.
+	settings, gcode := sliced(t, out)
+	if settings["curr_bed_type"] != "Textured PEI Plate" {
+		t.Errorf("curr_bed_type = %v", settings["curr_bed_type"])
+	}
+	for _, want := range []string{";===== machine: A1", "M140 S65", "M190 S65"} {
+		if !strings.Contains(gcode, want) {
+			t.Errorf("plate G-code lacks %q", want)
+		}
+	}
+	if strings.Contains(gcode, "M190 S35") {
+		t.Error("bed heated for a Cool Plate")
+	}
+
+	// A plate set on the printer wins.
+	out2 := filepath.Join(dir, "slice2", "job.gcode.3mf")
+	if _, err := s.Slice(context.Background(), slicer.Input{Model: stl, OutPath: out2, Profiles: profiles, Overrides: slicer.Overrides{BedType: "Cool Plate"}}); err != nil {
+		t.Fatal(err)
+	}
+	settings, gcode = sliced(t, out2)
+	if settings["curr_bed_type"] != "Cool Plate" || !strings.Contains(gcode, "S35") {
+		t.Errorf("Cool Plate override: %v", settings["curr_bed_type"])
+	}
+}
+
+// sliced reads a .gcode.3mf's project settings and plate G-code.
+func sliced(t *testing.T, path string) (map[string]any, string) {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	read := func(name string) []byte {
+		f, err := zr.Open(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		b, _ := io.ReadAll(f)
+		return b
+	}
+	var ps map[string]any
+	json.Unmarshal(read("Metadata/project_settings.config"), &ps)
+	return ps, string(read("Metadata/plate_1.gcode"))
 }

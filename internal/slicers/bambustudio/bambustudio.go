@@ -77,6 +77,10 @@ func (s *Slicer) Slice(ctx context.Context, in slicer.Input) (slicer.Result, err
 	}
 	// The CLI gets self-contained presets: the inherits chain flattened, the job's overrides applied.
 	flat := map[string]string{}
+	model := "" // the printer model, from the machine preset, for its default plate
+	if mm, err := s.lib.Flatten(slicer.ProfileMachine, in.Profiles[slicer.ProfileMachine]); err == nil {
+		model, _ = mm["printer_model"].(string)
+	}
 	for _, k := range []string{slicer.ProfileMachine, slicer.ProfileProcess, slicer.ProfileFilament} {
 		m, err := s.lib.Flatten(k, in.Profiles[k])
 		if err != nil {
@@ -84,6 +88,13 @@ func (s *Slicer) Slice(ctx context.Context, in slicer.Input) (slicer.Result, err
 		}
 		if k == slicer.ProfileProcess {
 			ApplyOverrides(m, in.Overrides)
+			// The command line slices for a Cool Plate (35 °C bed for PLA) unless told the
+			// plate: use the one set on the printer, or the one the model ships with.
+			if _, set := m["curr_bed_type"]; !set {
+				if bt := s.lib.DefaultBedType(model); bt != "" {
+					m["curr_bed_type"] = bt
+				}
+			}
 		}
 		flat[k] = filepath.Join(dir, k+".json")
 		b, _ := json.MarshalIndent(m, "", "    ")
@@ -145,6 +156,9 @@ func ApplyOverrides(p map[string]any, o slicer.Overrides) {
 	}
 	if o.Infill != nil {
 		p["sparse_infill_density"] = strconv.Itoa(*o.Infill) + "%"
+	}
+	if o.BedType != "" {
+		p["curr_bed_type"] = o.BedType
 	}
 }
 
