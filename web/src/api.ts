@@ -234,6 +234,8 @@ export const api = {
   startEstimate: (p: string, v: number, printerId: string) =>
     request<Estimate>("POST", `/api/projects/${enc(p)}/versions/${v}/estimate`, { printer_id: printerId }),
   approve: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/approve`),
+  requestJob: (p: string, v: number, printerId: string) => request<Approval>("POST", `/api/projects/${enc(p)}/versions/${v}/job`, { printer_id: printerId }),
+  printJob: (id: string) => request<{ job: Job; printer: string }>("POST", `/api/jobs/${enc(id)}/print`),
   job: (id: string) => request<Job>("GET", `/api/jobs/${enc(id)}`),
   printers: (status = true) => request<PrinterInfo[]>("GET", `/api/printers${status ? "" : "?status=0"}`),
   kinds: () => request<Kinds>("GET", "/api/printer-kinds"),

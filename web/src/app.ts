@@ -43,6 +43,7 @@ export class App {
 
   private projectSelect = h("select", { "aria-label": "Project", class: "project-select" });
   private printerSelect = h("select", { "aria-label": "Printer" });
+  private printBtn = h("button", { type: "button", class: "primary", "data-testid": "print", title: "Slice this version for the printer, then approve and send it" }, "Print…") as HTMLButtonElement;
   private versionLabel = h("span", { class: "version-label muted small" });
   private connection = h("span", { class: "conn", title: "Live updates" });
   private status = new PrinterStatusBar();
@@ -137,6 +138,7 @@ export class App {
         h("label", { class: "inline small follow", title: "Switch to the project an agent session works on" }, "Following ", this.followSelect),
         h("span", { class: "spacer" }),
         h("label", { class: "inline small" }, "Printer ", this.printerSelect),
+        this.printBtn,
         this.status.el, this.connection,
         h("a", { href: "/settings", class: "button" }, "Settings")),
       h("div", { class: "body" },
@@ -171,6 +173,10 @@ export class App {
       this.printerId = this.printerSelect.value;
       this.applyPrinter();
       void this.refreshProject();
+    });
+    this.printBtn.addEventListener("click", () => {
+      if (!this.project || !this.printerId) return;
+      void this.job.request(this.project, this.version, this.printerId, this.currentPrinter()?.name ?? "");
     });
     this.job.onShowToolpaths = (job: Job) => {
       this.toolpathSource = { url: urls.jobFile(job.project, job.id) };
@@ -291,6 +297,7 @@ export class App {
     if (!this.printers.some((p) => p.id === this.printerId)) this.printerId = (this.printers.find((p) => p.default) ?? this.printers[0])?.id ?? "";
     replace(this.printerSelect, ...this.printers.map((p) => h("option", { value: p.id, selected: p.id === this.printerId }, p.name)));
     this.printerSelect.disabled = this.printers.length < 2;
+    this.printBtn.disabled = this.printers.length === 0;
     this.applyPrinter();
   }
 

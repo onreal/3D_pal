@@ -36,28 +36,69 @@ export class JobPanel {
     this.render();
   }
 
+  /** The viewer's Print button: slice this version for the printer and wait for approval here. */
+  async request(project: string, version: number, printerId: string, printerName = "") {
+    this.job = null;
+    this.el.hidden = false;
+    replace(this.el, h("h2", {}, "Preparing the print"),
+      h("p", { class: "muted", role: "status" }, `Slicing ${project} version ${version}${printerName ? ` for ${printerName}` : ""}…`));
+    try {
+      const a = await api.requestJob(project, version, printerId);
+      this.show({ ...a, client: "you" });
+    } catch (e) {
+      replace(this.el, h("h2", {}, "Could not prepare the print"), h("p", { class: "error" }, (e as Error).message));
+    }
+  }
+
+  private async send(job: Job, btn: HTMLButtonElement, approveFirst: boolean) {
+    btn.disabled = true;
+    try {
+      if (approveFirst) {
+        btn.textContent = "Approving…";
+        this.job = { ...job, ...(await api.approve(job.id)) };
+      }
+      btn.textContent = "Sending to the printer…";
+      const r = await api.printJob(job.id);
+      this.job = { ...this.job!, ...r.job, printed: true };
+      toast(`Printing on ${r.printer}.`, "ok");
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+    this.render();
+  }
+
   private render() {
     const job = this.job;
     if (!job) return this.hide();
     this.el.hidden = false;
-    const approve = h("button", { class: "primary big", type: "button", "data-testid": "approve" }, "Approve print");
-    approve.addEventListener("click", async () => {
-      approve.disabled = true;
-      approve.textContent = "Approving…";
+    const button = (label: string, testid: string, cls: string, fn: (b: HTMLButtonElement) => void) => {
+      const b = h("button", { class: cls, type: "button", "data-testid": testid }, label) as HTMLButtonElement;
+      b.addEventListener("click", () => fn(b));
+      return b;
+    };
+    const approveOnly = button("Approve only", "approve", "link", async (b) => {
+      b.disabled = true;
       try {
         this.job = await api.approve(job.id);
-        toast("Approved. Tell the agent to print it.", "ok");
-        this.render();
+        toast("Approved. Send it from here, or tell the agent to print it.", "ok");
       } catch (e) {
         toast((e as Error).message, "error");
-        approve.disabled = false;
-        approve.textContent = "Approve print";
       }
+      this.render();
     });
     let action: HTMLElement;
-    if (job.printed) action = h("p", { class: "ok" }, "Sent to the printer.");
-    else if (job.approved) action = h("p", { class: "ok", "data-testid": "approved" }, "Approved. Tell the agent to print it; it will call print_job.");
-    else action = h("div", {}, approve, h("p", { class: "muted small" }, "Nothing prints until you approve this exact file."));
+    if (job.printed) {
+      action = h("div", {}, h("p", { class: "ok" }, "Sent to the printer."),
+        button("Print again", "print-again", "", () => void this.request(job.project, job.version, job.printer_id, this.printerName)));
+    } else if (job.approved) {
+      action = h("div", { "data-testid": "approved" },
+        button("Send to printer", "send", "primary big", (b) => void this.send(job, b, false)),
+        h("p", { class: "muted small" }, "Approved. Send it now, or let the agent call print_job."));
+    } else {
+      action = h("div", {},
+        button("Approve and print", "approve-print", "primary big", (b) => void this.send(job, b, true)),
+        h("p", { class: "muted small" }, "Nothing prints until you approve this exact file. ", approveOnly));
+    }
 
     replace(this.el,
       h("h2", {}, job.printed ? "Printed" : job.approved ? "Approved" : "Waiting for your approval"),

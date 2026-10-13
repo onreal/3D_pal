@@ -469,3 +469,47 @@ func TestSystemPresets(t *testing.T) {
 		t.Fatalf("%d", resp.StatusCode)
 	}
 }
+
+// The viewer's own print flow: Print creates a job, the user approves it, then sends it.
+func TestViewerPrintFlow(t *testing.T) {
+	f := setup(t)
+	f.compile(t)
+	resp, body := f.do(t, "POST", "/api/projects/cube/versions/1/job", map[string]string{"printer_id": "sim"}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	var a struct {
+		Job struct {
+			ID       string `json:"id"`
+			Approved bool   `json:"approved"`
+		} `json:"job"`
+	}
+	json.Unmarshal(body, &a)
+	if a.Job.ID == "" || a.Job.Approved {
+		t.Fatalf("%s", body)
+	}
+	if resp, body := f.do(t, "POST", "/api/jobs/"+a.Job.ID+"/print", nil, nil); resp.StatusCode != 409 || !strings.Contains(string(body), "not approved") {
+		t.Fatalf("printed before approval: %d %s", resp.StatusCode, body)
+	}
+	f.do(t, "POST", "/api/jobs/"+a.Job.ID+"/approve", nil, nil)
+	if resp, body := f.do(t, "POST", "/api/jobs/"+a.Job.ID+"/print", nil, nil); resp.StatusCode != 200 || !strings.Contains(string(body), `"printed":true`) {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if resp, _ := f.do(t, "POST", "/api/jobs/"+a.Job.ID+"/print", nil, nil); resp.StatusCode != 409 {
+		t.Fatalf("sent twice: %d", resp.StatusCode)
+	}
+	// Print again: a new job for the same version, waiting for approval; empty body = default printer.
+	resp, body = f.do(t, "POST", "/api/projects/cube/versions/1/job", nil, nil)
+	if resp.StatusCode != 200 || strings.Contains(string(body), a.Job.ID) {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if resp, _ := f.do(t, "POST", "/api/projects/cube/versions/9/job", nil, nil); resp.StatusCode != 404 {
+		t.Fatalf("unknown version: %d", resp.StatusCode)
+	}
+	if resp, _ := f.do(t, "POST", "/api/projects/cube/versions/1/job", map[string]string{"printer_id": "nope"}, nil); resp.StatusCode != 404 {
+		t.Fatalf("unknown printer: %d", resp.StatusCode)
+	}
+	if resp, _ := f.do(t, "POST", "/api/jobs/zz/print", nil, nil); resp.StatusCode != 400 {
+		t.Fatalf("bad id: %d", resp.StatusCode)
+	}
+}

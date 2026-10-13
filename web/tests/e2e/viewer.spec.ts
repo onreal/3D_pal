@@ -40,3 +40,32 @@ test("estimate button shows time, filament and cost", async ({ page }) => {
   await expect(page.locator(".estimate-panel")).toContainText("21 min");
   await expect(page.locator(".estimate-panel")).toContainText("7.4 g PLA");
 });
+
+test("Print slices the version, then Approve and print sends it, and Print again makes a new job", async ({ page }) => {
+  const requests = await stubApi(page);
+  await page.goto("/");
+  await page.getByTestId("print").click();
+  const panel = page.locator(".job-panel");
+  await expect(panel).toContainText("Waiting for your approval");
+  await expect(panel).toContainText("requested by you");
+  await expect(panel).toContainText("21 min");
+  await page.getByTestId("approve-print").click();
+  await expect(page.getByText("Printing on Workshop A1.")).toBeVisible();
+  await expect(panel).toContainText("Sent to the printer.");
+  const posts = requests.filter((r) => r.method === "POST").map((r) => r.url);
+  expect(posts).toEqual(["/api/projects/cube/versions/1/job", "/api/jobs/5e5e5e01/approve", "/api/jobs/5e5e5e01/print"]);
+  expect(JSON.parse(requests.find((r) => r.url.endsWith("/job"))!.body!)).toEqual({ printer_id: "a1" });
+
+  await page.getByTestId("print-again").click();
+  await expect(panel).toContainText("Waiting for your approval");
+  await expect(panel).toContainText("5e5e5e02");
+});
+
+test("an approved job can be sent from the viewer", async ({ page }) => {
+  const job = { id: "1a2b3c4d", project: "cube", version: 1, printer_id: "a1", approved: true, printed: false, estimate };
+  const requests = await stubApi(page, { jobs: [job] });
+  await page.goto("/");
+  await page.getByTestId("send").click();
+  await expect(page.locator(".job-panel")).toContainText("Sent to the printer.");
+  expect(requests.filter((r) => r.method === "POST").map((r) => r.url)).toEqual(["/api/jobs/1a2b3c4d/print"]);
+});

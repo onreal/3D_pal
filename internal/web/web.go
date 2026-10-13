@@ -98,9 +98,11 @@ func Handler(svc *pipeline.Service, cfg *config.Store, hub *events.Hub, assets f
 	mux.HandleFunc("GET /api/projects/{name}/versions/{v}/estimate", s.getEstimate)
 	mux.HandleFunc("GET /api/projects/{name}/versions/{v}/job.gcode.3mf", s.versionSlice)
 	mux.HandleFunc("POST /api/projects/{name}/versions/{v}/restore", s.restore)
+	mux.HandleFunc("POST /api/projects/{name}/versions/{v}/job", s.requestJob)
 
 	mux.HandleFunc("GET /api/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /api/jobs/{id}/approve", s.approve)
+	mux.HandleFunc("POST /api/jobs/{id}/print", s.printJob)
 
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
@@ -536,6 +538,58 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, job)
+}
+
+// requestJob slices a version for a printer and creates a job waiting for approval: the
+// viewer's Print button, the same as the agent's request_approval. Body: {"printer_id"}.
+func (s *Server) requestJob(w http.ResponseWriter, r *http.Request) {
+	name, ok := projectName(w, r)
+	if !ok {
+		return
+	}
+	n, ok := versionParam(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		PrinterID string `json:"printer_id"`
+	}
+	if r.ContentLength != 0 {
+		if err := decode(r, &body); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	// Slicing outlives a closed tab; the job arrives on the event stream.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Minute)
+	defer cancel()
+	a, err := s.svc.RequestApproval(ctx, name, n, body.PrinterID, slicer.Overrides{})
+	if err != nil {
+		if status(err) == http.StatusInternalServerError {
+			writeErr(w, http.StatusUnprocessableEntity, err)
+		} else {
+			fail(w, err)
+		}
+		return
+	}
+	writeJSON(w, 200, a)
+}
+
+// printJob sends an approved job to its printer: the viewer's "Send to printer" button.
+// The user is the one clicking, so this is the human path the approval gate allows.
+func (s *Server) printJob(w http.ResponseWriter, r *http.Request) {
+	id, ok := jobID(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+	defer cancel()
+	res, err := s.svc.Print(ctx, id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, res)
 }
 
 // ---- settings and printers -----------------------------------------------

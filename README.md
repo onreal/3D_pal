@@ -256,6 +256,14 @@ bed, passes its interference check, and fails it with a negative clearance.
 There is no approve tool: only your click in the viewer approves a print, and the setting
 cannot be turned off.
 
+### Printing from the viewer
+
+You don't need the agent to print. **Print…** in the top bar slices the version on screen
+for the selected printer and shows the job with its time, filament and cost. **Approve and
+print** sends it. **Approve only** leaves it for the agent's `print_job`, and **Send to
+printer** sends an approved job later. A job prints once: **Print again** on a printed job
+slices a new job for the same version, which you approve the same way.
+
 ## Layout
 
 ```
