@@ -604,7 +604,8 @@ func (s *Service) estimateInput(set config.Settings, cp config.Printer, p printe
 	}
 
 	h := sha256.New()
-	fmt.Fprintf(h, "slicer=%s\n", caps.Slicer)
+	// Bump sliceFormat when slicing itself changes, so cached slices are not reused.
+	fmt.Fprintf(h, "slicer=%s format=%d\n", caps.Slicer, sliceFormat)
 	kinds := make([]string, 0, len(profiles))
 	for k := range profiles {
 		kinds = append(kinds, k)
@@ -628,6 +629,10 @@ func (s *Service) estimateInput(set config.Settings, cp config.Printer, p printe
 	}
 	return in, slice, nil
 }
+
+// sliceFormat is 2 since jobs carry the A1's own start G-code and the build plate's bed
+// temperature; slices from before that are bad and must not be reused.
+const sliceFormat = 2
 
 // systemDefaults is the slicer's default preset of each kind for a printer model, if it ships any.
 func (s *Service) systemDefaults(sl slicer.Slicer, model string) map[string]slicer.Preset {
