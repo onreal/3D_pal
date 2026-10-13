@@ -138,6 +138,44 @@ func TestCompileErrorLeavesNoVersion(t *testing.T) {
 	}
 }
 
+// Every compile is bracketed by render events, so the viewer can show a render in progress
+// whoever started it, and clear it when it ends, failed or not.
+func TestCompileIsBracketedByRenderEvents(t *testing.T) {
+	e := newEnv(t)
+	var mu sync.Mutex
+	var seen []map[string]any
+	e.Events.Next = func(typ string, v any) {
+		if m, ok := v.(map[string]any); ok && typ == "render" {
+			mu.Lock()
+			seen = append(seen, m)
+			mu.Unlock()
+		}
+	}
+	if _, err := e.Svc.Compile(ctx, "cube", cube, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.Runner.OnRun = func(string, []string) ([]byte, error) {
+		return nil, errors.New("openscad failed: exit status 1\nERROR: syntax error")
+	}
+	if _, err := e.Svc.Compile(ctx, "cube", "cube(;", nil); err == nil {
+		t.Fatal("expected the broken model to fail")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 4 {
+		t.Fatalf("render events: %+v", seen)
+	}
+	if seen[0]["state"] != "started" || seen[1]["state"] != "done" || seen[1]["version"] != 1 || seen[0]["id"] != seen[1]["id"] {
+		t.Fatalf("successful render: %+v %+v", seen[0], seen[1])
+	}
+	if seen[2]["state"] != "started" || seen[3]["state"] != "failed" || !strings.Contains(seen[3]["error"].(string), "syntax error") || seen[2]["id"] != seen[3]["id"] {
+		t.Fatalf("failed render: %+v %+v", seen[2], seen[3])
+	}
+	if seen[0]["id"] == seen[2]["id"] || seen[0]["project"] != "cube" {
+		t.Fatalf("renders must be told apart: %+v", seen)
+	}
+}
+
 func TestPartThatDoesNotFitIsRefused(t *testing.T) {
 	e := newEnv(t)
 	r, err := e.Svc.Compile(ctx, "big", cube, map[string]any{"size": 300.0})

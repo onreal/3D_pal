@@ -80,6 +80,8 @@ export interface StubOptions {
   printingLayer?: number;
   statusDown?: boolean; // reachable, but the status channel doesn't answer
   jobs?: unknown[];
+  /** Server-sent events delivered when the page connects, e.g. an agent's render in progress. */
+  events?: { type: string; data: unknown }[];
   requests?: { method: string; url: string; body: string | null }[];
 }
 
@@ -93,7 +95,14 @@ export async function stubApi(page: Page, opts: StubOptions = {}) {
     const url = new URL(req.url());
     requests.push({ method: req.method(), url: url.pathname + url.search, body: req.postData() });
     const path = url.pathname;
-    if (path === "/api/events") return route.fulfill({ status: 200, contentType: "text/event-stream", body: "retry: 600000\n\n" });
+    if (path === "/api/events") {
+      const body = (opts.events ?? []).map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e.data)}\n\n`).join("");
+      return route.fulfill({ status: 200, contentType: "text/event-stream", body: "retry: 600000\n\n" + body });
+    }
+    if (path === "/api/projects/cube/params" && req.method() === "POST") {
+      await new Promise((r) => setTimeout(r, 800)); // a render takes a while
+      return json(route, { project: "cube", version: 2, size: { X: size, Y: size, Z: size }, params: JSON.parse(req.postData() ?? "{}").params });
+    }
     if (path === "/api/settings" && req.method() === "GET") return json(route, settings);
     if (path === "/api/settings" && req.method() === "PUT") return json(route, JSON.parse(req.postData() ?? "{}"));
     if (path === "/api/printer-kinds") return json(route, kinds);

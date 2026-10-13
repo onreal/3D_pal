@@ -18,6 +18,11 @@ const (
 	Settings = "settings" // settings saved
 	Session  = "session"  // an agent session opened, changed or closed
 	Assembly = "assembly" // an assembly timeline finished building
+	// Render brackets every compile, whoever asked for it (the viewer's Render 3D button, the agent's
+	// compile_model, a restore): {id, project, state: "started"}, then {id, project, state: "done",
+	// version} or {id, project, state: "failed", error}. The viewer shows it on the model, so a
+	// render in progress is never mistaken for the finished model.
+	Render = "render"
 )
 
 type Event struct {

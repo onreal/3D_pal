@@ -267,6 +267,15 @@ bed, passes its interference check, and fails it with a negative clearance.
 There is no approve tool: only your click in the viewer approves a print, and the setting
 cannot be turned off.
 
+### Rendering
+
+Changing a parameter renders nothing: the panel marks the edits "Not rendered yet" until you
+press **Render 3D** (or Enter in a field), which compiles them as one new version. **Reset**
+puts back the values of the version shown. While any render runs, from the viewer, the
+agent's `compile_model` or a restore, a banner over the model says who started it and for
+how long, and the model shown dims: it is still the previous version. The banner then shows
+the new version, or the error.
+
 ### Printing from the viewer
 
 You don't need the agent to print. **Print…** in the top bar slices the version on screen

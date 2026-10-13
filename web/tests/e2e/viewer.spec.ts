@@ -118,3 +118,32 @@ test("a printer whose status channel is down shows Status unavailable, not Offli
   await expect(page.getByTestId("printer-busy")).toContainText("Workshop A1 isn't reporting its status, so it may be printing.");
   await expect(page.getByTestId("send")).toHaveCount(0);
 });
+
+test("changing a parameter renders nothing until Render 3D, which renders once", async ({ page }) => {
+  const requests = await stubApi(page);
+  await page.goto("/");
+  const render = page.getByTestId("render-3d");
+  await expect(render).toBeDisabled();
+  await page.getByLabel("size", { exact: true }).fill("30");
+  await page.getByLabel("size", { exact: true }).fill("35");
+  await expect(page.getByTestId("params-status")).toContainText("Not rendered yet: size");
+  await page.waitForTimeout(300);
+  const posts = () => requests.filter((r) => r.method === "POST" && r.url === "/api/projects/cube/params");
+  expect(posts()).toHaveLength(0);
+  await render.click();
+  await expect(render).toContainText("Rendering…");
+  await expect(page.getByTestId("params-status")).toContainText("Version 2 rendered");
+  expect(posts()).toHaveLength(1);
+  expect(JSON.parse(posts()[0]!.body!)).toEqual({ params: { size: 35 } });
+});
+
+test("a render by the agent shows on the viewer, with who started it", async ({ page }) => {
+  await stubApi(page, { events: [{ type: "render", data: { id: 7, project: "cube", state: "started", session: "S1", client: "claude-code" } }] });
+  await page.goto("/");
+  const banner = page.getByTestId("render-status");
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("Rendering 3D…");
+  await expect(banner).toContainText("by claude-code");
+  await expect(banner).toContainText("The model below is the previous version.");
+  await expect(page.getByTestId("viewer")).toHaveClass(/rendering/);
+});

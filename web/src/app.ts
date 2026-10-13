@@ -15,6 +15,7 @@ import { ToolpathPreview } from "./toolpaths/preview";
 import type { View } from "./viewer/controls";
 import { DISPLAY_MODES, type DisplayMode } from "./viewer/modes";
 import type { Axis } from "./viewer/section";
+import { RenderStatus } from "./viewer/rendering";
 import { Viewer, type ModelInfo } from "./viewer/viewer";
 
 function loadFollow(): Follow {
@@ -64,6 +65,7 @@ export class App {
   private job = new JobPanel();
   private estimate = new EstimatePanel();
   private params = new ParamsPanel();
+  private rendering = new RenderStatus();
   private history = new HistoryPanel();
   private log = new LogPanel();
   private toolpathSource: { url: string } | null = null;
@@ -125,7 +127,7 @@ export class App {
     this.tabs.toolpaths.addEventListener("click", () => this.showTab("toolpaths"));
     replace(this.stage,
       h("div", { class: "tabs", role: "tablist" }, this.tabs.model, this.tabs.assembly, this.tabs.toolpaths),
-      h("div", { class: "pane model-pane" }, toolbar, this.canvasHost, this.info, this.warning, this.empty),
+      h("div", { class: "pane model-pane" }, toolbar, this.canvasHost, this.rendering.el, this.info, this.warning, this.empty),
       h("div", { class: "pane assembly-pane", hidden: true }, this.assembly.el),
       h("div", { class: "pane toolpaths-pane", hidden: true }, this.toolpaths.el));
 
@@ -248,6 +250,8 @@ export class App {
     this.sessions.onFollow = (f) => this.setFollow(f);
     this.sessions.onOpenProject = (p) => void this.openProject(p, 0).then(() => this.loadProjects());
     this.live.on("assembly", (r) => this.assembly.receive(r));
+    this.rendering.onBusy = (busy) => this.canvasHost.classList.toggle("rendering", busy);
+    this.live.on("render", (e) => this.rendering.receive(e));
     this.live.on("settings", () => {
       void this.loadSettings();
       void this.loadPrinters();
@@ -348,6 +352,7 @@ export class App {
 
   private async openProject(name: string, version: number) {
     this.project = name;
+    this.rendering.setProject(name);
     this.empty.hidden = true;
     this.projectSelect.value = name;
     const versions = await api.versions(name).catch(() => []);

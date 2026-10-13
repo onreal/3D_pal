@@ -123,6 +123,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); width
 .dim-label.measure { color: #fff; background: #1a73e8; border-color: #1a73e8; }
 .info { position: absolute; left: 12px; bottom: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; box-shadow: var(--shadow); font-weight: 600; }
 .warning { position: absolute; left: 12px; right: 12px; top: 56px; background: var(--error-soft); color: var(--error); border: 1px solid var(--error); border-radius: 8px; padding: 8px 12px; font-weight: 600; }
+.render-status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; max-width: min(560px, calc(100% - 24px)); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); }
+.render-status.rendering { border: 2px solid var(--accent); background: var(--accent-soft); }
+.render-status.done { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.render-status.failed { border-color: var(--error); background: var(--error-soft); color: var(--error); }
+.render-status .render-note { flex-basis: 100%; }
+.render-status button.link { margin-left: auto; font-size: 18px; line-height: 1; color: inherit; }
+.render-error { flex-basis: 100%; margin: 0; max-height: 140px; overflow: auto; white-space: pre-wrap; font: 12px/1.4 var(--mono); color: var(--text); }
+.viewer.rendering .viewer-canvas { opacity: .45; filter: grayscale(.6); transition: opacity .2s, filter .2s; }
 .empty { position: absolute; inset: 56px 0 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; background: color-mix(in srgb, var(--viewer-bg) 80%, transparent); }
 .empty p { max-width: 460px; color: var(--muted); }
 
@@ -158,6 +166,10 @@ details.panel .log-panel h2 { display: none; }
 .param-bool { flex-direction: row; align-items: center; gap: 8px; }
 .param-label { font-size: 13px; display: flex; gap: 6px; align-items: baseline; justify-content: space-between; }
 .param-label code { font-size: 11px; color: var(--muted); }
+.params-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.params-actions .primary { flex: 1; justify-content: center; }
+.params-panel.dirty { border-color: var(--accent); }
+.unrendered { color: var(--accent); font-weight: 600; }
 .param-range { display: grid; grid-template-columns: 1fr 76px; gap: 8px; align-items: center; }
 .param-range input[type="number"] { width: 76px; }
 .param-vector { display: flex; gap: 4px; }

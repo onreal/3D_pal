@@ -45,8 +45,38 @@ describe("parameter controls", () => {
   });
 });
 
-describe("recompiling", () => {
-  test("shows elapsed time and a queued change, then the result", async () => {
+describe("rendering", () => {
+  const ok = (version: number) => ({ ok: true, status: 200, text: async () => JSON.stringify({ version }) });
+
+  test("editing renders nothing until Render 3D; the change is marked unrendered", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => ok(2));
+    vi.stubGlobal("fetch", fetchMock);
+    const p = new ParamsPanel();
+    (p as unknown as { project: string }).project = "cube";
+    p.render(params);
+    const button = p.el.querySelector<HTMLButtonElement>('[data-testid="render-3d"]')!;
+    expect(button.disabled).toBe(true);
+
+    const range = p.el.querySelector<HTMLInputElement>('input[type="range"]')!;
+    range.value = "30";
+    range.dispatchEvent(new Event("input"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(button.disabled).toBe(false);
+    expect(p.el.textContent).toContain("Not rendered yet: size");
+
+    button.click();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).params.size).toBe(30);
+    expect(p.el.textContent).toContain("Version 2 rendered");
+    expect(button.disabled).toBe(true); // rendered values are the new baseline
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("shows elapsed time on the button while rendering, and refuses a second press", async () => {
     vi.useFakeTimers();
     let resolve!: (v: unknown) => void;
     const fetchMock = vi.fn(() => new Promise((r) => (resolve = r)));
@@ -54,20 +84,37 @@ describe("recompiling", () => {
     const p = new ParamsPanel();
     (p as unknown as { project: string }).project = "cube";
     p.render(params);
-    const range = p.el.querySelector<HTMLInputElement>('input[type="range"]')!;
-    range.value = "30";
-    range.dispatchEvent(new Event("input"));
-    await vi.advanceTimersByTimeAsync(600); // debounce
+    const text = p.el.querySelector<HTMLInputElement>('input[type="text"]')!;
+    text.value = "B2";
+    text.dispatchEvent(new Event("input"));
+    text.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await vi.advanceTimersByTimeAsync(3000);
-    expect(p.el.textContent).toMatch(/Recompiling… 3 s/);
-    range.value = "31";
-    range.dispatchEvent(new Event("input"));
-    await vi.advanceTimersByTimeAsync(700);
-    expect(p.el.textContent).toContain("your latest change is next");
-    resolve({ ok: true, status: 200, text: async () => JSON.stringify({ version: 2 }) });
+    const button = p.el.querySelector<HTMLButtonElement>('[data-testid="render-3d"]')!;
+    expect(button.textContent).toContain("Rendering… 3 s");
+    expect(button.disabled).toBe(true);
+    button.click();
+    resolve(ok(2));
     await vi.advanceTimersByTimeAsync(10);
-    expect(fetchMock).toHaveBeenCalledTimes(2); // the first compile, then the queued one
+    expect(fetchMock).toHaveBeenCalledOnce();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  test("Reset puts back the shown version's values", () => {
+    const p = new ParamsPanel();
+    p.render(params);
+    const box = p.el.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+    expect(p.edits()).toEqual({ chamfer: false });
+    p.el.querySelector<HTMLButtonElement>('button:not([data-testid])')!.click();
+    expect(p.edits()).toEqual({});
+  });
+
+  test("unrendered edits survive a reload, e.g. when the agent renders meanwhile", () => {
+    const p = new ParamsPanel();
+    p.render(params, { size: 42 });
+    expect(p.edits()).toEqual({ size: 42 });
+    expect(p.values().size).toBe(42);
   });
 });

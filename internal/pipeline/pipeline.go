@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/margarit/printpipe/internal/config"
@@ -61,7 +62,8 @@ type Service struct {
 
 	watchMu  sync.Mutex
 	watching map[string]*watcher
-	locks    sync.Map // project name → *sync.Mutex
+	locks    sync.Map     // project name → *sync.Mutex
+	renders  atomic.Int64 // numbers render events, so the viewer can pair a start with its end
 
 	sendMu  sync.Mutex
 	sending map[string]bool // job IDs being sent to a printer
@@ -328,10 +330,29 @@ func (s *Service) Compile(ctx context.Context, proj, code string, params map[str
 	return res, err
 }
 
+// compile tells the viewer a render started, builds the version, then tells it how the render
+// ended. Every compile goes through here, so the viewer shows the agent's renders and its own alike.
 func (s *Service) compile(ctx context.Context, proj, code string, params map[string]any) (CompileResult, error) {
 	if err := project.ValidName(proj); err != nil {
 		return CompileResult{}, err
 	}
+	id := s.renders.Add(1)
+	s.emit(ctx, events.Render, map[string]any{"id": id, "project": proj, "state": "started"})
+	res, err := s.build(ctx, proj, code, params)
+	if err != nil {
+		msg := err.Error()
+		if len(msg) > 600 { // the viewer shows it on the model; the run log keeps it all
+			msg = msg[:600] + "…"
+		}
+		s.emit(ctx, events.Render, map[string]any{"id": id, "project": proj, "state": "failed", "error": msg})
+		return res, err
+	}
+	s.emit(ctx, events.Render, map[string]any{"id": id, "project": proj, "state": "done", "version": res.Version})
+	return res, nil
+}
+
+// build writes, compiles and commits one version; see Compile.
+func (s *Service) build(ctx context.Context, proj, code string, params map[string]any) (CompileResult, error) {
 	set, err := s.d.Config.Load()
 	if err != nil {
 		return CompileResult{}, err

@@ -11,6 +11,8 @@ export interface EventMap {
   settings: { saved_at: string };
   session: { kind: "opened" | "updated" | "closed"; session: SessionInfo };
   assembly: AssemblyResult;
+  /** Brackets every compile, the viewer's and the agent's alike (see RenderStatus). */
+  render: FromSession & { id: number; project: string; state: "started" | "done" | "failed"; version?: number; error?: string };
 }
 
 type Handler<K extends keyof EventMap> = (data: EventMap[K]) => void;
@@ -25,7 +27,7 @@ export class Live {
     this.source = new EventSource(url);
     this.source.onopen = () => this.onConnection(true);
     this.source.onerror = () => this.onConnection(false);
-    for (const type of ["model", "job", "estimate", "printer", "settings", "session", "assembly"] as const) {
+    for (const type of ["model", "job", "estimate", "printer", "settings", "session", "assembly", "render"] as const) {
       this.source.addEventListener(type, (e) => {
         let data: unknown;
         try {
