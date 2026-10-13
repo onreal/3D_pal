@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -531,5 +532,36 @@ func TestFollowingAPrint(t *testing.T) {
 	e.Svc.Cancel(ctx, "")
 	if ps, _ = again.Printers(ctx, true); ps[0].Job != nil {
 		t.Fatalf("idle printer has job %+v", ps[0].Job)
+	}
+}
+
+func TestWatchRidesOutAStatusOutage(t *testing.T) {
+	e := newEnv(t)
+	var mu sync.Mutex
+	var states []printer.State
+	e.Events.Next = func(typ string, v any) {
+		if m, ok := v.(map[string]any); ok && typ == "printer" {
+			mu.Lock()
+			states = append(states, m["status"].(printer.Status).State)
+			mu.Unlock()
+		}
+	}
+	a := mustRequestApproval(t, e, "cube")
+	e.Svc.Approve(a.Job.ID)
+	if _, err := e.Svc.Print(ctx, a.Job.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.Printer.StatusDown(printer.ErrUnreachable)
+	time.Sleep(60 * time.Millisecond) // many polls fail
+	ps, _ := e.Svc.Printers(ctx, true)
+	if ps[0].Status == nil || ps[0].Status.State != printer.Unknown || ps[0].Error == "" {
+		t.Fatalf("printers during the outage: %+v %q", ps[0].Status, ps[0].Error)
+	}
+	e.Printer.StatusDown(nil)
+	time.Sleep(30 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Contains(states, printer.Unknown) || states[len(states)-1] != printer.Printing {
+		t.Fatalf("states %v: want unknown during the outage, then printing again from the same watch", states)
 	}
 }

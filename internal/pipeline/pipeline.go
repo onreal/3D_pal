@@ -475,6 +475,10 @@ func (s *Service) Printers(ctx context.Context, withStatus bool) ([]PrinterInfo,
 			cancel()
 			if err != nil {
 				info.Error = err.Error()
+				if st.State == printer.Unknown { // on the network, status not answering: may be printing
+					info.Status = &st
+					s.ensureWatch(cp, p)
+				}
 			} else {
 				info.Status = &st
 				if job, ok := s.jobFor(cp.ID, st); ok {
@@ -1114,7 +1118,7 @@ func (s *Service) setActive(printerID string, job jobs.Job) {
 // jobFor is the job a printer status belongs to: the one this server sent, or, after a
 // restart, the last printed job matching the name the printer reports ("cube_v3").
 func (s *Service) jobFor(printerID string, st printer.Status) (jobs.Job, bool) {
-	if st.State == printer.Idle || st.State == printer.Offline {
+	if st.State == printer.Idle || st.State == printer.Offline || st.State == printer.Unknown {
 		return jobs.Job{}, false
 	}
 	s.activeMu.Lock()
@@ -1152,6 +1156,9 @@ func (s *Service) ensureWatch(cp config.Printer, p printer.Printer) {
 }
 
 // watch polls a printer's status during a print and publishes it to the viewer (PRD FR-14, V-14).
+// WatchGiveUp is how long a watch keeps polling a printer whose status can't be read.
+var WatchGiveUp = 15 * time.Minute
+
 func (s *Service) watch(cp config.Printer, p printer.Printer) {
 	s.watchMu.Lock()
 	if w, ok := s.watching[cp.ID]; ok {
@@ -1172,7 +1179,7 @@ func (s *Service) watch(cp config.Printer, p printer.Printer) {
 		}()
 		t := time.NewTicker(s.d.PollEvery)
 		defer t.Stop()
-		misses := 0
+		var failingSince time.Time
 		for {
 			select {
 			case <-ctx.Done():
@@ -1183,14 +1190,19 @@ func (s *Service) watch(cp config.Printer, p printer.Printer) {
 			st, err := p.Status(sctx)
 			c()
 			if err != nil {
-				misses++
-				s.d.Events.Publish(events.Printer, map[string]any{"printer_id": cp.ID, "status": printer.Status{State: printer.Offline, Message: err.Error()}})
-				if misses >= 12 {
+				if st.State == "" {
+					st = printer.Status{State: printer.Offline, Message: err.Error()}
+				}
+				s.d.Events.Publish(events.Printer, map[string]any{"printer_id": cp.ID, "status": st})
+				// A print outlives a status outage: keep watching for a while, then give up.
+				if failingSince.IsZero() {
+					failingSince = time.Now()
+				} else if time.Since(failingSince) > WatchGiveUp {
 					return
 				}
 				continue
 			}
-			misses = 0
+			failingSince = time.Time{}
 			ev := map[string]any{"printer_id": cp.ID, "status": st}
 			if job, ok := s.jobFor(cp.ID, st); ok {
 				ev["print_job"] = job

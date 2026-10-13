@@ -108,3 +108,13 @@ test("Discard drops an approved job and Print makes a new one", async ({ page })
   await page.getByTestId("print").click();
   await expect(page.getByTestId("approve-print")).toBeVisible();
 });
+
+test("a printer whose status channel is down shows Status unavailable, not Offline, and no send button", async ({ page }) => {
+  const approved = { id: "1a2b3c4d", project: "cube", version: 1, printer_id: "a1", approved: true, printed: false, estimate };
+  await stubApi(page, { jobs: [approved], statusDown: true });
+  await page.goto("/");
+  await expect(page.getByTestId("printer-state")).toHaveText("Status unavailable");
+  await expect(page.getByTestId("printer-state")).toHaveAttribute("title", /status service \(MQTT/);
+  await expect(page.getByTestId("printer-busy")).toContainText("Workshop A1 isn't reporting its status, so it may be printing.");
+  await expect(page.getByTestId("send")).toHaveCount(0);
+});

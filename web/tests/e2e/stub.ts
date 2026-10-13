@@ -78,6 +78,7 @@ export interface StubOptions {
   size?: number;
   /** The A1 is printing job 1a2b3c4d (cube v1), at this layer of 100. */
   printingLayer?: number;
+  statusDown?: boolean; // reachable, but the status channel doesn't answer
   jobs?: unknown[];
   requests?: { method: string; url: string; body: string | null }[];
 }
@@ -104,6 +105,8 @@ export async function stubApi(page: Page, opts: StubOptions = {}) {
     }
     if (path.startsWith("/api/sessions/") && req.method() === "DELETE") return json(route, { ok: true });
     if (path === "/api/printers") {
+      if (opts.statusDown) return json(route, [{ ...A1, error: "MQTT connect: unreachable",
+        status: { state: "unknown", progress: 0, layer: 0, total_layers: 0, message: "The printer is on the network, but its status service (MQTT, port 8883) isn't answering." } }]);
       if (opts.printingLayer === undefined) return json(route, [A1]);
       return json(route, [{ ...A1,
         status: { state: "printing", progress: opts.printingLayer / 100, layer: opts.printingLayer, total_layers: 100, remaining_s: 3900, job_name: "cube_v1" },

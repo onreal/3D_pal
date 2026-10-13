@@ -96,6 +96,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); width
 .dot.printing { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
 .dot.idle, .dot.finished { background: var(--ok); }
 .dot.failed, .dot.offline { background: var(--error); }
+.dot.unknown { background: var(--muted); }
 .dot.paused { background: #d9a400; }
 @keyframes pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .dot.printing { animation: none; } }

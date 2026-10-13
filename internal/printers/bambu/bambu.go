@@ -128,6 +128,11 @@ type Option func(*Printer)
 func WithUploader(u Uploader) Option { return func(p *Printer) { p.ftp = u } }
 func WithMQTT(m MQTT) Option         { return func(p *Printer) { p.mqtt = m } }
 
+// WithReachable replaces the check that the printer answers on the network at all.
+func WithReachable(f func(ctx context.Context, ip string) bool) Option {
+	return func(p *Printer) { p.reachable = f }
+}
+
 type Printer struct {
 	cfg  Config
 	ftp  Uploader
@@ -135,10 +140,12 @@ type Printer struct {
 
 	mu       sync.Mutex
 	uploaded map[string]bool
+	// reachable tells whether the printer answers on the network at all (FTPS port).
+	reachable func(ctx context.Context, ip string) bool
 }
 
 func New(c Config, opts ...Option) *Printer {
-	p := &Printer{cfg: c, uploaded: map[string]bool{}}
+	p := &Printer{cfg: c, uploaded: map[string]bool{}, reachable: ftpsAnswers}
 	for _, o := range opts {
 		o(p)
 	}
@@ -284,6 +291,12 @@ func (p *Printer) awaitStart(ctx context.Context) error {
 func (p *Printer) Status(ctx context.Context) (printer.Status, error) {
 	rep, err := p.mqtt.Report(ctx, p.cfg)
 	if err != nil {
+		// The A1's MQTT broker can stop taking connections while the rest of the printer,
+		// and a print, run on. Offline only when the printer doesn't answer at all.
+		if !errors.Is(err, printer.ErrAuth) && p.reachable(ctx, p.cfg.IP) {
+			return printer.Status{State: printer.Unknown, Message: "The printer is on the network, but its status service (MQTT, port 8883) isn't answering. " +
+				"A print may still be running. Close Bambu Studio or Handy if they are connected over LAN; if it persists, restart the printer once it is idle."}, err
+		}
 		return printer.Status{State: printer.Offline, Message: hint(err)}, err
 	}
 	st := printer.Status{Progress: rep.Percent / 100, Layer: rep.Layer, TotalLayers: rep.TotalLayer,
@@ -302,6 +315,36 @@ func (p *Printer) Status(ctx context.Context) (printer.Status, error) {
 		st.State = printer.Idle
 	}
 	return st, nil
+}
+
+var (
+	probeMu   sync.Mutex
+	probeSeen = map[string]probeResult{}
+)
+
+type probeResult struct {
+	ok bool
+	at time.Time
+}
+
+// ftpsAnswers tells whether the printer accepts a connection on its FTPS port, checked at
+// most every RetryAfter per printer.
+func ftpsAnswers(ctx context.Context, ip string) bool {
+	probeMu.Lock()
+	r, ok := probeSeen[ip]
+	probeMu.Unlock()
+	if ok && time.Since(r.at) < RetryAfter {
+		return r.ok
+	}
+	d := net.Dialer{Timeout: 2 * time.Second}
+	cn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, "990"))
+	if err == nil {
+		cn.Close()
+	}
+	probeMu.Lock()
+	probeSeen[ip] = probeResult{ok: err == nil, at: time.Now()}
+	probeMu.Unlock()
+	return err == nil
 }
 
 func (p *Printer) Cancel(ctx context.Context) error {

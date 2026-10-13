@@ -35,7 +35,7 @@ export const isActive = (s: PrinterStatus | null | undefined) => s?.state === "p
 
 /** "Printing · layer 37 / 100 · 42% · about 1 h 05 min left". */
 export function liveLabel(s: PrinterStatus): string {
-  const state = { printing: "Printing", paused: "Paused", finished: "Finished", failed: "Failed", idle: "Idle", offline: "Offline" }[s.state];
+  const state = { printing: "Printing", paused: "Paused", finished: "Finished", failed: "Failed", idle: "Idle", offline: "Offline", unknown: "Status unavailable" }[s.state];
   const parts = [state];
   if (s.total_layers) parts.push(`layer ${Math.min(s.layer, s.total_layers)} / ${s.total_layers}`);
   if (isActive(s)) {

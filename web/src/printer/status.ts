@@ -3,6 +3,7 @@ import { h, replace, toast } from "../dom";
 
 const LABELS: Record<PrinterStatus["state"], string> = {
   idle: "Idle", printing: "Printing", paused: "Paused", finished: "Finished", failed: "Failed", offline: "Offline",
+  unknown: "Status unavailable",
 };
 
 /** Live state and progress of the selected printer during a print (PRD FR-14, V-14). */
@@ -24,7 +25,7 @@ export class PrinterStatusBar {
   receive(printerId: string, status: PrinterStatus) {
     if (!this.printer || printerId !== this.printer.id) return;
     this.status = status;
-    this.error = status.state === "offline" ? status.message ?? "" : "";
+    this.error = status.state === "offline" || status.state === "unknown" ? status.message ?? "" : "";
     this.render();
   }
 
@@ -49,7 +50,7 @@ export class PrinterStatusBar {
     });
     replace(this.el,
       h("span", { class: `dot ${state}`, "aria-hidden": "true" }),
-      h("span", { class: "small", title: this.error || undefined }, `${LABELS[state]}`),
+      h("span", { class: "small", title: (state === "unknown" ? st?.message : this.error) || undefined, "data-testid": "printer-state" }, `${LABELS[state]}`),
       active ? h("progress", { max: 100, value: pct, "aria-label": "Print progress" }) : null,
       active ? h("span", { class: "small" }, `${pct}%${st?.total_layers ? ` · layer ${st.layer}/${st.total_layers}` : ""}`) : null,
       active ? h("button", { class: "link small", type: "button", "data-testid": "watch-print", onclick: () => this.onWatch() }, "Watch") : null,

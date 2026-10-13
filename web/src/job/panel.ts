@@ -10,7 +10,7 @@ export class JobPanel {
   private requestedBy = "";
   private sendError = ""; // why the last send failed, kept next to the button
   private preparing = false; // the Print button's slice is running
-  private busy = new Set<string>(); // printers that are printing or paused
+  private busy = new Map<string, string>(); // printers that are printing, paused, or can't tell → state
   private names = new Map<string, string>(); // printer ID → name
   onShowToolpaths: (job: Job) => void = () => {};
 
@@ -29,13 +29,13 @@ export class JobPanel {
     }
   }
 
-  /** A printer's state; a busy printer gets no send button. */
+  /** A printer's state; a busy printer, or one whose status is unavailable, gets no send button. */
   setPrinterState(printerId: string, state: string, name?: string) {
     if (name) this.names.set(printerId, name);
-    const was = this.busy.has(printerId);
-    if (state === "printing" || state === "paused") this.busy.add(printerId);
+    const was = this.busy.get(printerId);
+    if (state === "printing" || state === "paused" || state === "unknown") this.busy.set(printerId, state);
     else this.busy.delete(printerId);
-    if (was !== this.busy.has(printerId) && this.job?.printer_id === printerId) this.render();
+    if (was !== this.busy.get(printerId) && this.job?.printer_id === printerId) this.render();
   }
 
   hide() {
@@ -128,8 +128,11 @@ export class JobPanel {
         button("Print again", "print-again", "", () => void this.request(job.project, job.version, job.printer_id, this.printerName)));
     } else if (this.busy.has(job.printer_id)) {
       // Sending would fail the pre-flight check: say so instead of offering the button.
+      const name = this.names.get(job.printer_id) ?? (this.printerName || job.printer_id);
       action = h("div", { "data-testid": "printer-busy" },
-        h("p", { class: "muted" }, `${this.names.get(job.printer_id) ?? (this.printerName || job.printer_id)} is printing. Send this job when the print is done.`),
+        h("p", { class: "muted" }, this.busy.get(job.printer_id) === "unknown"
+          ? `${name} isn't reporting its status, so it may be printing. Send this job once its status is back.`
+          : `${name} is printing. Send this job when the print is done.`),
         h("p", { class: "muted small" }, job.approved ? null : approveOnly, job.approved ? null : " · ", discard));
     } else if (job.approved) {
       action = h("div", { "data-testid": "approved" },

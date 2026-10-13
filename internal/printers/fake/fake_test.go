@@ -60,3 +60,27 @@ func TestDriverRegistered(t *testing.T) {
 		t.Fatalf("%v %+v", err, p)
 	}
 }
+
+func TestFakeTestHooks(t *testing.T) {
+	ctx := context.Background()
+	p := fake.New(fake.Slicer("fake"))
+	if p.Capabilities().Slicer != "fake" {
+		t.Fatal("slicer option ignored")
+	}
+	if checks := p.Diagnose(ctx); len(checks) == 0 || !checks[0].OK {
+		t.Fatalf("%+v", checks)
+	}
+	if checks := fake.New(fake.FailWith(printer.ErrUnreachable)).Diagnose(ctx); len(checks) == 0 || checks[0].OK {
+		t.Fatalf("broken printer diagnosed fine: %+v", checks)
+	}
+	p.StatusDown(printer.ErrUnreachable)
+	if st, err := p.Status(ctx); err == nil || st.State != printer.Unknown {
+		t.Fatalf("%+v %v", st, err)
+	}
+	p.StatusDown(nil)
+	p.RefuseStart(printer.ErrRefused)
+	r, _ := p.Upload(ctx, printer.Job{Path: "x", Name: "a.gcode.3mf"})
+	if err := p.Start(ctx, r); err == nil {
+		t.Fatal("refused start succeeded")
+	}
+}

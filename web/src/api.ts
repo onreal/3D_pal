@@ -58,7 +58,8 @@ export interface Job {
 
 export interface Approval { job: Job; estimate: Estimate; printer_name: string; viewer_url: string }
 
-export type PrinterState = "idle" | "printing" | "paused" | "finished" | "failed" | "offline";
+/** unknown: the printer is on the network but its status channel doesn't answer; it may be printing. */
+export type PrinterState = "idle" | "printing" | "paused" | "finished" | "failed" | "offline" | "unknown";
 
 export interface PrinterStatus {
   state: PrinterState;

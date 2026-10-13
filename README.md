@@ -157,6 +157,7 @@ HTTP clients point at `http://127.0.0.1:8080/mcp`. For stdio-only clients withou
 | A session is stuck, or its client is gone | End it in the viewer's Sessions panel; idle sessions also close after 12 hours. |
 | Port 8080 is taken by another program | `PRINTPIPE_PORT=8090 ./printpipe.sh up` and `PRINTPIPE_PORT=8090 ./printpipe.sh mcp-add`. |
 | Very slow on Apple Silicon | Turn on Rosetta emulation in Docker Desktop settings. |
+| The printer shows **Status unavailable** | The printer is on the network but its MQTT status service (port 8883) isn't answering; a print keeps running. The A1 takes only a few MQTT clients: close Bambu Studio or Handy if they're connected over LAN. If it persists, restart the printer once it's idle. The server keeps one connection per printer and reads what the printer pushes, so it doesn't add load. |
 
 ## Assembly mode
 

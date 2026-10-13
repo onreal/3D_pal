@@ -50,6 +50,9 @@ const (
 	Finished State = "finished"
 	Failed   State = "failed"
 	Offline  State = "offline"
+	// Unknown: the printer is on the network but its status channel doesn't answer; it may
+	// be printing.
+	Unknown State = "unknown"
 )
 
 type Status struct {

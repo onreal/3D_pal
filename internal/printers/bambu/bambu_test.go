@@ -251,3 +251,22 @@ func TestRegisteredDriverValidatesConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStatusChannelDownOnALivePrinterIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		err       error
+		reachable bool
+		want      printer.State
+	}{
+		{printer.ErrUnreachable, true, printer.Unknown},
+		{printer.ErrUnreachable, false, printer.Offline},
+		{printer.ErrAuth, true, printer.Offline},
+	} {
+		p := bambu.New(cfg, bambu.WithMQTT(&fakeMQTT{err: tc.err}),
+			bambu.WithReachable(func(context.Context, string) bool { return tc.reachable }))
+		st, err := p.Status(context.Background())
+		if err == nil || st.State != tc.want || st.Message == "" {
+			t.Errorf("%v reachable=%v: got %+v %v, want %s", tc.err, tc.reachable, st, err, tc.want)
+		}
+	}
+}

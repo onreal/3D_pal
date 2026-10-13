@@ -62,7 +62,12 @@ type Printer struct {
 	printing  bool
 	job       string
 	refuse    error
+	statusErr error // the status channel is down, the printer is not
 }
+
+// StatusDown makes Status fail with err and report Unknown while the printer itself carries
+// on, like an A1 whose MQTT broker stopped answering mid-print; nil brings status back.
+func (p *Printer) StatusDown(err error) { p.mu.Lock(); p.statusErr = err; p.mu.Unlock() }
 
 // RefuseStart makes Start fail with err after a successful upload, like a printer that turns
 // the start command down; nil accepts again.
@@ -134,6 +139,9 @@ func (p *Printer) Status(context.Context) (printer.Status, error) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.statusErr != nil {
+		return printer.Status{State: printer.Unknown, Message: "status channel down"}, p.statusErr
+	}
 	if !p.printing {
 		return printer.Status{State: printer.Idle}, nil
 	}

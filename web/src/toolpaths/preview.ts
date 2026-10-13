@@ -108,6 +108,10 @@ export class ToolpathPreview {
    * we sent). Returns true when the page should load the job file to follow it.
    */
   setPrint(url: string | null, status: PrinterStatus | null): boolean {
+    if (status?.state === "unknown") { // the status channel is down, not the print: hold the last layer
+      if (this.following) this.live.textContent = "Status unavailable · showing the last layer the printer reported";
+      return false;
+    }
     if (url !== this.printUrl) this.clock.reset();
     const wasFollowing = this.following;
     this.printUrl = url && status && status.state !== "idle" && status.state !== "offline" ? url : null;
