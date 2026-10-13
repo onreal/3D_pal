@@ -9,6 +9,8 @@ export class JobPanel {
   private printerName = "";
   private requestedBy = "";
   private sendError = ""; // why the last send failed, kept next to the button
+  private busy = new Set<string>(); // printers that are printing or paused
+  private names = new Map<string, string>(); // printer ID → name
   onShowToolpaths: (job: Job) => void = () => {};
 
   async load(project: string) {
@@ -20,6 +22,15 @@ export class JobPanel {
     } catch {
       this.hide();
     }
+  }
+
+  /** A printer's state; a busy printer gets no send button. */
+  setPrinterState(printerId: string, state: string, name?: string) {
+    if (name) this.names.set(printerId, name);
+    const was = this.busy.has(printerId);
+    if (state === "printing" || state === "paused") this.busy.add(printerId);
+    else this.busy.delete(printerId);
+    if (was !== this.busy.has(printerId) && this.job?.printer_id === printerId) this.render();
   }
 
   hide() {
@@ -92,6 +103,11 @@ export class JobPanel {
     if (job.printed) {
       action = h("div", {}, h("p", { class: "ok" }, "Sent to the printer."),
         button("Print again", "print-again", "", () => void this.request(job.project, job.version, job.printer_id, this.printerName)));
+    } else if (this.busy.has(job.printer_id)) {
+      // Sending would fail the pre-flight check: say so instead of offering the button.
+      action = h("div", { "data-testid": "printer-busy" },
+        h("p", { class: "muted" }, `${this.names.get(job.printer_id) ?? (this.printerName || job.printer_id)} is printing. Send this job when the print is done.`),
+        job.approved ? null : approveOnly);
     } else if (job.approved) {
       action = h("div", { "data-testid": "approved" },
         this.sendError ? h("p", { class: "error", role: "alert", "data-testid": "send-error" }, this.sendError) : null,

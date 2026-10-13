@@ -80,3 +80,12 @@ test("a refused send stays in the panel with Try again", async ({ page }) => {
   await expect(page.getByTestId("send-error")).toContainText("Developer Mode");
   await expect(page.getByTestId("send")).toHaveText("Try again");
 });
+
+test("no send button while the printer is printing", async ({ page }) => {
+  const approved = { id: "1a2b3c4d", project: "cube", version: 1, printer_id: "a1", approved: true, printed: false, estimate };
+  await stubApi(page, { jobs: [approved], printingLayer: 37 });
+  await page.goto("/");
+  await expect(page.getByTestId("printer-busy")).toContainText("Workshop A1 is printing. Send this job when the print is done.");
+  await expect(page.getByTestId("send")).toHaveCount(0);
+  await expect(page.locator(".job-panel")).not.toContainText("Send it now");
+});

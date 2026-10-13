@@ -222,6 +222,7 @@ export class App {
     });
     this.live.on("printer", (e) => {
       this.status.receive(e.printer_id, e.status);
+      this.job.setPrinterState(e.printer_id, e.status.state);
       if (e.job) this.job.show({ job: e.job });
       if (e.printer_id === this.printerId) this.syncPrint(e.print_job ?? null, e.status);
     });
@@ -317,6 +318,7 @@ export class App {
     replace(this.printerSelect, ...this.printers.map((p) => h("option", { value: p.id, selected: p.id === this.printerId }, p.name)));
     this.printerSelect.disabled = this.printers.length < 2;
     this.printBtn.disabled = this.printers.length === 0;
+    for (const p of this.printers) this.job.setPrinterState(p.id, p.status?.state ?? "idle", p.name);
     const cur = this.currentPrinter();
     this.syncPrint(cur?.print_job ?? null, cur?.status ?? null);
     this.applyPrinter();
