@@ -157,3 +157,28 @@ func TestDiscardedJobLeavesPendingAndCannotPrint(t *testing.T) {
 		t.Fatalf("unknown job: %v", err)
 	}
 }
+
+func TestLastApprovedSkipsUnapprovedPrintedAndDiscarded(t *testing.T) {
+	store, dir := newStore(t)
+	file := writeFile(t, dir, "job.gcode.3mf", "v1")
+	if _, err := store.LastApproved("a1", "cube", 1); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("no jobs: %v", err)
+	}
+	waiting, _ := store.RequestVersion("cube", 1, "a1", file, nil)
+	printed, _ := store.RequestVersion("cube", 1, "a1", file, nil)
+	store.Approve(printed.ID)
+	store.MarkPrinted(printed.ID)
+	dropped, _ := store.RequestVersion("cube", 1, "a1", file, nil)
+	store.Approve(dropped.ID)
+	store.Discard(dropped.ID)
+	if _, err := store.LastApproved("a1", "cube", 1); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("only unapproved, printed and discarded jobs: %v", err)
+	}
+	store.Approve(waiting.ID)
+	if j, err := store.LastApproved("a1", "cube", 1); err != nil || j.ID != waiting.ID {
+		t.Fatalf("got %+v %v", j, err)
+	}
+	if _, err := store.LastApproved("other", "cube", 1); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("other printer: %v", err)
+	}
+}
