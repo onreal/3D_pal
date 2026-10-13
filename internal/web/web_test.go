@@ -513,3 +513,25 @@ func TestViewerPrintFlow(t *testing.T) {
 		t.Fatalf("bad id: %d", resp.StatusCode)
 	}
 }
+
+func TestDiscardedJobLeavesThePanel(t *testing.T) {
+	f := setup(t)
+	f.compile(t)
+	a, _ := f.env.Svc.RequestApproval(context.Background(), "cube", 0, "", zeroOverrides)
+	f.env.Svc.Approve(a.Job.ID)
+	if resp, _ := f.do(t, "POST", "/api/jobs/"+a.Job.ID+"/discard", nil, map[string]string{"Origin": "https://evil.example"}); resp.StatusCode != 403 {
+		t.Fatalf("cross-origin discard: %d", resp.StatusCode)
+	}
+	if resp, body := f.do(t, "POST", "/api/jobs/"+a.Job.ID+"/discard", nil, nil); resp.StatusCode != 200 || !strings.Contains(string(body), `"discarded":true`) {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if _, body := f.do(t, "GET", "/api/projects/cube/jobs", nil, nil); strings.TrimSpace(string(body)) != "[]" {
+		t.Fatalf("still pending: %s", body)
+	}
+	if resp, _ := f.do(t, "POST", "/api/jobs/"+a.Job.ID+"/print", nil, nil); resp.StatusCode != 409 {
+		t.Fatalf("print after discard: %d", resp.StatusCode)
+	}
+	if resp, _ := f.do(t, "POST", "/api/jobs/"+a.Job.ID+"/approve", nil, nil); resp.StatusCode != 409 {
+		t.Fatalf("approve after discard: %d", resp.StatusCode)
+	}
+}

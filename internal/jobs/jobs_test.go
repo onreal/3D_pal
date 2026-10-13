@@ -129,3 +129,31 @@ func TestPendingAndHash(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestDiscardedJobLeavesPendingAndCannotPrint(t *testing.T) {
+	store, dir := newStore(t)
+	file := writeFile(t, dir, "job.gcode.3mf", "v1")
+	job, _ := store.Request("cube", "a1", file)
+	store.Approve(job.ID)
+	if err := store.Discard(job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CheckPrintable(job.ID, file); !errors.Is(err, jobs.ErrDiscarded) {
+		t.Fatalf("want ErrDiscarded, got %v", err)
+	}
+	if p, _ := store.Pending("cube"); len(p) != 0 {
+		t.Fatalf("discarded job still pending: %+v", p)
+	}
+	if j, _ := store.Get(job.ID); !j.Discarded {
+		t.Fatalf("not marked: %+v", j)
+	}
+	printed, _ := store.Request("cube", "a1", file)
+	store.Approve(printed.ID)
+	store.MarkPrinted(printed.ID)
+	if err := store.Discard(printed.ID); !errors.Is(err, jobs.ErrPrinted) {
+		t.Fatalf("discarding a printed job: %v", err)
+	}
+	if err := store.Discard("nope"); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("unknown job: %v", err)
+	}
+}

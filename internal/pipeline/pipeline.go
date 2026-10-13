@@ -961,6 +961,9 @@ func (s *Service) Approve(jobID string) (jobs.Job, error) {
 		if job.Printed {
 			return jobs.ErrPrinted
 		}
+		if job.Discarded {
+			return jobs.ErrDiscarded
+		}
 		if err := s.d.Jobs.Approve(jobID); err != nil {
 			return err
 		}
@@ -976,6 +979,27 @@ func (s *Service) Approve(jobID string) (jobs.Job, error) {
 }
 
 // PendingJobs lists the project's jobs that were not printed yet.
+// Discard drops a job the user no longer wants (another part, other settings): it leaves
+// the job panel and can't be approved or printed.
+func (s *Service) Discard(jobID string) (jobs.Job, error) {
+	job, getErr := s.d.Jobs.Get(jobID)
+	err := s.record(context.Background(), job.Project, "discard_job", map[string]any{"job_id": jobID, "by": "user"}, func() error {
+		if getErr != nil {
+			return getErr
+		}
+		if err := s.d.Jobs.Discard(jobID); err != nil {
+			return err
+		}
+		var err error
+		if job, err = s.d.Jobs.Get(jobID); err != nil {
+			return err
+		}
+		s.d.Events.Publish(events.Job, map[string]any{"job": job})
+		return nil
+	})
+	return job, err
+}
+
 func (s *Service) PendingJobs(proj string) ([]jobs.Job, error) { return s.d.Jobs.Pending(proj) }
 
 func (s *Service) Job(id string) (jobs.Job, error) { return s.d.Jobs.Get(id) }

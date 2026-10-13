@@ -124,6 +124,10 @@ export async function stubApi(page: Page, opts: StubOptions = {}) {
       const id = path.split("/")[3];
       return json(route, { id, project: "cube", version: 1, printer_id: "a1", approved: true, printed: false, estimate });
     }
+    if (/^\/api\/jobs\/[0-9a-f]{8}\/discard$/.test(path)) {
+      const id = path.split("/")[3];
+      return json(route, { id, project: "cube", version: 1, printer_id: "a1", approved: true, printed: false, discarded: true, estimate });
+    }
     if (path === "/api/projects/cube/versions/1/job" && req.method() === "POST") {
       const n = requests.filter((r) => r.url === path).length;
       return json(route, { job: { id: `5e5e5e0${n}`, project: "cube", version: 1, printer_id: "a1", approved: false, printed: false, estimate }, estimate, printer_name: "Workshop A1", viewer_url: "" });

@@ -102,6 +102,7 @@ func Handler(svc *pipeline.Service, cfg *config.Store, hub *events.Hub, assets f
 
 	mux.HandleFunc("GET /api/jobs/{id}", s.getJob)
 	mux.HandleFunc("POST /api/jobs/{id}/approve", s.approve)
+	mux.HandleFunc("POST /api/jobs/{id}/discard", s.discard)
 	mux.HandleFunc("POST /api/jobs/{id}/print", s.printJob)
 
 	mux.HandleFunc("GET /api/settings", s.getSettings)
@@ -187,7 +188,7 @@ func status(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, project.ErrNotFound), errors.Is(err, jobs.ErrNotFound), errors.Is(err, config.ErrUnknownPrinter):
 		return http.StatusNotFound
-	case errors.Is(err, jobs.ErrPrinted), errors.Is(err, printer.ErrBusy), errors.Is(err, config.ErrNoPrinter), errors.Is(err, jobs.ErrNotApproved), errors.Is(err, jobs.ErrFileChanged), errors.Is(err, pipeline.ErrSending):
+	case errors.Is(err, jobs.ErrPrinted), errors.Is(err, jobs.ErrDiscarded), errors.Is(err, printer.ErrBusy), errors.Is(err, config.ErrNoPrinter), errors.Is(err, jobs.ErrNotApproved), errors.Is(err, jobs.ErrFileChanged), errors.Is(err, pipeline.ErrSending):
 		return http.StatusConflict
 	case errors.Is(err, printer.ErrUnreachable), errors.Is(err, printer.ErrAuth), errors.Is(err, printer.ErrNoStorage), errors.Is(err, printer.ErrRefused):
 		return http.StatusBadGateway
@@ -533,6 +534,20 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	job, err := s.svc.Approve(id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, job)
+}
+
+// discard drops a job the user no longer wants from the panel.
+func (s *Server) discard(w http.ResponseWriter, r *http.Request) {
+	id, ok := jobID(w, r)
+	if !ok {
+		return
+	}
+	job, err := s.svc.Discard(id)
 	if err != nil {
 		fail(w, err)
 		return

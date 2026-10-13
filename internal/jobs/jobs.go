@@ -19,6 +19,7 @@ var (
 	ErrFileChanged = errors.New("the job file changed after approval: request approval again")
 	ErrNotFound    = errors.New("no such job")
 	ErrPrinted     = errors.New("this job was already sent to the printer: request approval again to print another copy")
+	ErrDiscarded   = errors.New("this job was discarded: request approval again")
 )
 
 type Job struct {
@@ -30,6 +31,7 @@ type Job struct {
 	Version    int             `json:"version"`
 	Approved   bool            `json:"approved"`
 	Printed    bool            `json:"printed"`
+	Discarded  bool            `json:"discarded,omitempty"`
 	Estimate   json.RawMessage `json:"estimate,omitempty"`
 }
 
@@ -68,13 +70,13 @@ func (s *Store) RequestVersion(project string, version int, printerID, file stri
 
 func (s *Store) Get(id string) (Job, error) {
 	var j Job
-	var approvedAt, printedAt, est sql.NullString
-	err := s.db.QueryRow(`SELECT id, project, version, printer_id, file_path, file_sha256, approved_at, printed_at, estimate FROM jobs WHERE id = ?`, id).
-		Scan(&j.ID, &j.Project, &j.Version, &j.PrinterID, &j.FilePath, &j.FileSHA256, &approvedAt, &printedAt, &est)
+	var approvedAt, printedAt, discardedAt, est sql.NullString
+	err := s.db.QueryRow(`SELECT id, project, version, printer_id, file_path, file_sha256, approved_at, printed_at, discarded_at, estimate FROM jobs WHERE id = ?`, id).
+		Scan(&j.ID, &j.Project, &j.Version, &j.PrinterID, &j.FilePath, &j.FileSHA256, &approvedAt, &printedAt, &discardedAt, &est)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, fmt.Errorf("job %s: %w", id, ErrNotFound)
 	}
-	j.Approved, j.Printed = approvedAt.Valid, printedAt.Valid
+	j.Approved, j.Printed, j.Discarded = approvedAt.Valid, printedAt.Valid, discardedAt.Valid
 	if est.Valid {
 		j.Estimate = json.RawMessage(est.String)
 	}
@@ -100,6 +102,9 @@ func (s *Store) CheckPrintable(id, file string) error {
 	if err != nil {
 		return err
 	}
+	if j.Discarded {
+		return ErrDiscarded
+	}
 	if !j.Approved {
 		return ErrNotApproved
 	}
@@ -123,6 +128,20 @@ func (s *Store) MarkPrinted(id string) error {
 	return err
 }
 
+// Discard takes a job that was not printed off the table: it can't be approved or sent any more.
+func (s *Store) Discard(id string) error {
+	j, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	if j.Printed {
+		return ErrPrinted
+	}
+	_, err = s.db.Exec(`UPDATE jobs SET discarded_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+		updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ? AND discarded_at IS NULL`, id)
+	return err
+}
+
 // LastPrinted is the most recent job sent to a printer for a project version.
 func (s *Store) LastPrinted(printerID, project string, version int) (Job, error) {
 	var id string
@@ -137,9 +156,9 @@ func (s *Store) LastPrinted(printerID, project string, version int) (Job, error)
 	return s.Get(id)
 }
 
-// Pending lists approved-or-waiting jobs that were not printed yet, newest first.
+// Pending lists approved-or-waiting jobs that were neither printed nor discarded, newest first.
 func (s *Store) Pending(project string) ([]Job, error) {
-	rows, err := s.db.Query(`SELECT id FROM jobs WHERE project = ? AND printed_at IS NULL ORDER BY created_at DESC`, project)
+	rows, err := s.db.Query(`SELECT id FROM jobs WHERE project = ? AND printed_at IS NULL AND discarded_at IS NULL ORDER BY created_at DESC`, project)
 	if err != nil {
 		return nil, err
 	}

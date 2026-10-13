@@ -9,16 +9,21 @@ export class JobPanel {
   private printerName = "";
   private requestedBy = "";
   private sendError = ""; // why the last send failed, kept next to the button
+  private preparing = false; // the Print button's slice is running
   private busy = new Set<string>(); // printers that are printing or paused
   private names = new Map<string, string>(); // printer ID → name
   onShowToolpaths: (job: Job) => void = () => {};
 
-  async load(project: string) {
+  /** Shows the version's job waiting for approval or sending, if any: a job for another
+   *  version (another part, other parameters) stays out of the way. */
+  async load(project: string, version: number) {
     try {
       const pending = await api.pendingJobs(project);
-      const job = pending[0];
+      if (this.preparing) return;
+      const job = pending.find((j) => j.version === version);
       if (job) this.show({ job, estimate: job.estimate!, printer_name: job.printer_id, viewer_url: "" });
-      else this.hide();
+      // Keep a job just sent from this version on screen; anything else goes.
+      else if (!(this.job?.printed && this.job.project === project && this.job.version === version)) this.hide();
     } catch {
       this.hide();
     }
@@ -40,6 +45,10 @@ export class JobPanel {
 
   /** Called for job events: a new request, or an approval made elsewhere. */
   show(a: Partial<Approval> & { job: Job; client?: string }) {
+    if (a.job.discarded) {
+      if (this.job?.id === a.job.id) this.hide();
+      return;
+    }
     const sameJob = this.job?.id === a.job.id;
     if (!sameJob) this.requestedBy = this.sendError = "";
     if (a.client) this.requestedBy = a.client;
@@ -51,13 +60,16 @@ export class JobPanel {
   /** The viewer's Print button: slice this version for the printer and wait for approval here. */
   async request(project: string, version: number, printerId: string, printerName = "") {
     this.job = null;
+    this.preparing = true;
     this.el.hidden = false;
     replace(this.el, h("h2", {}, "Preparing the print"),
       h("p", { class: "muted", role: "status" }, `Slicing ${project} version ${version}${printerName ? ` for ${printerName}` : ""}…`));
     try {
       const a = await api.requestJob(project, version, printerId);
+      this.preparing = false;
       this.show({ ...a, client: "you" });
     } catch (e) {
+      this.preparing = false;
       replace(this.el, h("h2", {}, "Could not prepare the print"), h("p", { class: "error" }, (e as Error).message));
     }
   }
@@ -99,6 +111,17 @@ export class JobPanel {
       }
       this.render();
     });
+    const discard = button("Discard", "discard", "link", async (b) => {
+      b.disabled = true;
+      try {
+        await api.discard(job.id);
+        this.hide();
+        toast("Job discarded.", "ok");
+      } catch (e) {
+        b.disabled = false;
+        toast((e as Error).message, "error");
+      }
+    });
     let action: HTMLElement;
     if (job.printed) {
       action = h("div", {}, h("p", { class: "ok" }, "Sent to the printer."),
@@ -107,16 +130,16 @@ export class JobPanel {
       // Sending would fail the pre-flight check: say so instead of offering the button.
       action = h("div", { "data-testid": "printer-busy" },
         h("p", { class: "muted" }, `${this.names.get(job.printer_id) ?? (this.printerName || job.printer_id)} is printing. Send this job when the print is done.`),
-        job.approved ? null : approveOnly);
+        h("p", { class: "muted small" }, job.approved ? null : approveOnly, job.approved ? null : " · ", discard));
     } else if (job.approved) {
       action = h("div", { "data-testid": "approved" },
         this.sendError ? h("p", { class: "error", role: "alert", "data-testid": "send-error" }, this.sendError) : null,
         button(this.sendError ? "Try again" : "Send to printer", "send", "primary big", (b) => void this.send(job, b, false)),
-        h("p", { class: "muted small" }, "Approved. Send it now, or let the agent call print_job."));
+        h("p", { class: "muted small" }, "Approved. Send it now, or let the agent call print_job. ", discard));
     } else {
       action = h("div", {},
         button("Approve and print", "approve-print", "primary big", (b) => void this.send(job, b, true)),
-        h("p", { class: "muted small" }, "Nothing prints until you approve this exact file. ", approveOnly));
+        h("p", { class: "muted small" }, "Nothing prints until you approve this exact file. ", approveOnly, " · ", discard));
     }
 
     replace(this.el,

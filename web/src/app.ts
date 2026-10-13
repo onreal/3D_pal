@@ -353,7 +353,7 @@ export class App {
     const versions = await api.versions(name).catch(() => []);
     this.latest = versions.at(-1)?.version ?? 0;
     await this.showVersion(version || this.latest);
-    await Promise.all([this.params.load(name, this.version), this.job.load(name), this.log.load(name)]);
+    await Promise.all([this.params.load(name, this.version), this.log.load(name)]);
   }
 
   private async refreshProject() {
@@ -373,6 +373,7 @@ export class App {
     }
     this.estimate.set(this.project, version, this.printerId);
     this.history.setShown(version);
+    void this.job.load(this.project, version);
     this.reloadHistory();
     if (version !== this.latest) void this.params.load(this.project, version);
     if (this.tab === "toolpaths") void this.loadToolpaths();

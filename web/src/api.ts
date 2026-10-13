@@ -52,6 +52,7 @@ export interface Job {
   version: number;
   approved: boolean;
   printed: boolean;
+  discarded?: boolean;
   estimate?: Estimate;
 }
 
@@ -243,6 +244,7 @@ export const api = {
   startEstimate: (p: string, v: number, printerId: string) =>
     request<Estimate>("POST", `/api/projects/${enc(p)}/versions/${v}/estimate`, { printer_id: printerId }),
   approve: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/approve`),
+  discard: (id: string) => request<Job>("POST", `/api/jobs/${enc(id)}/discard`),
   requestJob: (p: string, v: number, printerId: string) => request<Approval>("POST", `/api/projects/${enc(p)}/versions/${v}/job`, { printer_id: printerId }),
   printJob: (id: string) => request<{ job: Job; printer: string }>("POST", `/api/jobs/${enc(id)}/print`),
   job: (id: string) => request<Job>("GET", `/api/jobs/${enc(id)}`),

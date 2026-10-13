@@ -89,3 +89,22 @@ test("no send button while the printer is printing", async ({ page }) => {
   await expect(page.getByTestId("send")).toHaveCount(0);
   await expect(page.locator(".job-panel")).not.toContainText("Send it now");
 });
+
+test("a job for another version stays out of the panel", async ({ page }) => {
+  const job = { id: "2b2b2b2b", project: "cube", version: 2, printer_id: "a1", approved: true, printed: false, estimate };
+  await stubApi(page, { jobs: [job] });
+  await page.goto("/");
+  await expect(page.getByTestId("size")).toBeVisible();
+  await expect(page.locator(".job-panel")).toBeHidden();
+});
+
+test("Discard drops an approved job and Print makes a new one", async ({ page }) => {
+  const job = { id: "3c3c3c3c", project: "cube", version: 1, printer_id: "a1", approved: true, printed: false, estimate };
+  const requests = await stubApi(page, { jobs: [job] });
+  await page.goto("/");
+  await page.getByTestId("discard").click();
+  await expect(page.locator(".job-panel")).toBeHidden();
+  expect(requests.filter((r) => r.method === "POST" && r.url.endsWith("/discard")).map((r) => r.url)).toEqual(["/api/jobs/3c3c3c3c/discard"]);
+  await page.getByTestId("print").click();
+  await expect(page.getByTestId("approve-print")).toBeVisible();
+});

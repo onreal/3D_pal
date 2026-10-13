@@ -267,6 +267,11 @@ print** sends it. **Approve only** leaves it for the agent's `print_job`, and **
 printer** sends an approved job later. A job prints once: **Print again** on a printed job
 slices a new job for the same version, which you approve the same way.
 
+**One part of a model.** A model with a `part` parameter (for example `cap_top`) prints one
+part at a time. Choose the part under Parameters, which makes a new version, then **Print…**.
+The job panel shows only the job for the version on screen. **Discard** drops a job you no
+longer want, so it can't be approved or sent.
+
 **Following a print.** While the printer runs a job sent from here, the status bar shows
 **Watch**. It opens the Toolpaths tab on the exact file the printer is running, with **Follow
 print** on. You see the layers printed so far, the current layer marked, and the layer,
