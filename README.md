@@ -224,8 +224,9 @@ Skills format, and reach agents three ways:
 
 | Prompt | Arguments | Task |
 | --- | --- | --- |
-| `design_part` | `request`, `project` | A single part in the house format, checked and estimated |
-| `design_assembly` | `request`, `project` | A multi-part object: interfaces, assembly timeline, interference check, coupons, plate |
+| `design` | `idea` (optional) | **Architect mode.** Start from an idea, or from nothing. Claude asks what it needs, decides single part or assembly, names and creates the project itself, and takes it to an estimate |
+| `design_part` | `request`, `project` (optional) | A single part in the house format, checked and estimated |
+| `design_assembly` | `request`, `project` (optional) | A multi-part object: interfaces, assembly timeline, interference check, coupons, plate |
 | `add_assembly_timeline` | `project`, `order` | Declare the build order for the viewer's Assembly tab |
 | `review_model` | `project` | Audit a project against the checklist; report problems with fixes |
 | `tune_fit` | `project`, `problem` | Adjust clearances after a test print and recompile the coupon |
@@ -233,6 +234,12 @@ Skills format, and reach agents three ways:
 
 In Claude Code the prompts are slash commands, e.g. `/mcp__print-pipeline__review_model
 upio-orbit`, and resources can be attached with `@print-pipeline:printpipe://guides/fits`.
+
+**You never need a project to start.** Run `/mcp__print-pipeline__design`, with or without an
+idea, or just describe what you want in chat. Claude names the project itself (checking
+`list_projects` so it never writes into an existing one), and its first `compile_model` call
+creates it. Only the prompts that work on an existing model (review, tune, timeline, print)
+take a project name.
 
 `compile_model` also reports each model's `echo()` lines and OpenSCAD warnings under
 "Model output", so the checks a model prints reach the agent. The `get_assembly` tool

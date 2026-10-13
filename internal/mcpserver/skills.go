@@ -68,6 +68,28 @@ func AssemblyPrompt(project, order string) string {
 	return b.String()
 }
 
+// ArchitectPrompt is the task for designing something from an idea, or from nothing at all.
+// Unlike every other prompt it takes no project: the agent works out the design, names the
+// project and creates it with its first compile_model call. idea may be empty, in which case
+// the agent opens by asking what to make.
+func ArchitectPrompt(idea string) string {
+	var b strings.Builder
+	b.WriteString("You are the CAD and 3D-printing architect for this design. The user has no project for it: you decide the design, name the project and create it.\n\n")
+	if idea != "" {
+		fmt.Fprintf(&b, "The idea: %s\n\n", idea)
+	} else {
+		b.WriteString("There is no idea yet. Ask the user what they want to make, what it is for and what it has to fit or hold, in one short message, then continue with the steps below.\n\n")
+	}
+	b.WriteString("1. Brief. Work out what the object does, what it attaches to, holds or fits around, the loads and environment, the material and how many are needed. Ask only for what you would otherwise have to guess, above all the real measurements of anything it mates with. Choose sensible defaults for the rest and say what you chose.\n")
+	b.WriteString("2. Architecture. Decide whether it is a single part or several: split it when it is bigger than the printer (list_printers gives the build volume), when parts move against each other, when it must assemble around something, or when one piece would need supports a split avoids. For each part choose the print orientation (biggest flat face down, loads along the layers, no overhang over 45 degrees) and how the parts join (screws, snaps, press fits, hinges, with named clearances from " + skills.GuideURI("fits") + "). Share the brief in a few lines: parts, orientation, joints, key dimensions, material. Then carry on; stop only if a measurement you need is missing.\n")
+	b.WriteString("3. Name the project yourself. Use a short descriptive name of lowercase words joined by -, for example pipe-clamp-25mm (letters, digits, - and _, starting with a letter or digit, at most 64 characters). Call list_projects first: if the name is taken by something else, add -2, -3 and so on. Never write into an existing project unless the user asked you to change that project.\n")
+	b.WriteString("4. Your first compile_model call with that name creates the project. Write the model in the house format from the template: " + skills.TemplateURI("single-part") + " for a single part, " + skills.TemplateURI("multi-part") + " for several parts (read " + skills.GuideURI("multi-part") + " and " + skills.GuideURI("assembly") + " first).\n")
+	b.WriteString("5. Read every compile summary (size, fits line, INFO and CHECK lines, warnings) and look at the previews. Fix and recompile until it matches the brief with no warnings. For several parts, also compile each part, compile assembled and run get_assembly, and compile check_interference.\n")
+	b.WriteString("6. Estimate with estimate_print. Then tell the user the project name, the parts and how each prints, the time, filament and cost, and which coupon to print first if a fit matters. Offer to print, but only request approval when they ask: you cannot approve a print yourself.")
+	attach(&b, "skill", "modeling", "printability")
+	return b.String()
+}
+
 // DesignPartPrompt is the task for a new single-part model.
 func DesignPartPrompt(request, project string) string {
 	var b strings.Builder
@@ -175,6 +197,16 @@ func addPrompts(s *mcp.Server) {
 	project := promptArg{"project", "The project name (letters, digits, - and _)", true}
 	newProject := promptArg{"project", "Project name for the new model (letters, digits, - and _)", false}
 	request := promptArg{"request", "What to make, e.g. \"a wall bracket for a 25 mm pipe\"", true}
+	// The way in when the user has nothing yet: no project, not even a request is required.
+	addPrompt(s, "design", "Design something (architect mode)",
+		"Start from an idea, or from nothing: Claude acts as the CAD and 3D-printing architect, asks what it needs, decides single part or assembly, names and creates the project itself, and takes it to an estimate.",
+		[]promptArg{{"idea", "Optional: what you want to make, in your own words, e.g. \"a wall mount for my router\"", false}},
+		func(in map[string]string) (string, string) {
+			if in["idea"] == "" {
+				return "Design something new", ArchitectPrompt("")
+			}
+			return "Design " + in["idea"], ArchitectPrompt(in["idea"])
+		})
 	addPrompt(s, "design_part", "Design a printable part",
 		"Design a single printable part in the house format: Customizer parameters, checks, preview review and an estimate.",
 		[]promptArg{request, newProject}, func(in map[string]string) (string, string) {

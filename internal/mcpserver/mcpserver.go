@@ -32,14 +32,18 @@ Every model follows the printpipe-cad house format. Read printpipe://skill first
 the workflow, the file layout, the definition of done and which guide to read
 (printpipe://guides/modeling, multi-part, assembly, fits, printability, validation, tools,
 troubleshooting), and links two complete templates (printpipe://templates/single-part,
-printpipe://templates/multi-part). The prompts design_part, design_assembly,
+printpipe://templates/multi-part). The prompts design, design_part, design_assembly,
 add_assembly_timeline, review_model, tune_fit and print_model give step-by-step tasks.
+You never need a project from the user: the first compile_model call with a new name creates
+it. For a new design, name the project yourself (short, lowercase, words joined by -), after
+checking list_projects so you don't write into an existing one. The design prompt is the way
+in from an idea, or from nothing.
 compile_model reports the model's echo() lines and OpenSCAD warnings: fix every warning.
 For a model with several parts, declare an assembly timeline and check it with
 get_assembly.`
 
 type CompileIn struct {
-	Project  string         `json:"project" jsonschema:"folder name: letters, digits, - and _"`
+	Project  string         `json:"project" jsonschema:"folder name: letters, digits, - and _; a new name creates the project, so name a new design yourself"`
 	Code     string         `json:"scad_code,omitempty" jsonschema:"complete OpenSCAD source with named top-level parameters; leave empty to recompile the latest version with new params"`
 	Params   map[string]any `json:"params,omitempty" jsonschema:"optional parameter overrides, by top-level parameter name"`
 	Estimate bool           `json:"estimate,omitempty" jsonschema:"also slice it for the default printer and report time, filament and cost"`

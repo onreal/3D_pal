@@ -65,7 +65,7 @@ func TestSkillIsServedAsResources(t *testing.T) {
 func TestEveryPrompt(t *testing.T) {
 	cs, _ := connectWithAssembly(t)
 	list, err := cs.ListPrompts(ctx, nil)
-	if err != nil || len(list.Prompts) != 6 {
+	if err != nil || len(list.Prompts) != 7 {
 		t.Fatalf("%v %+v", err, list)
 	}
 	for _, c := range []struct {
@@ -96,10 +96,66 @@ func TestEveryPrompt(t *testing.T) {
 	}
 }
 
+// The architect prompt starts a design from nothing: no project, not even a request. Claude
+// interviews the user, decides the architecture and names and creates the project itself.
+func TestDesignPromptNeedsNoProject(t *testing.T) {
+	cs, _ := connectWithAssembly(t)
+	list, err := cs.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *mcp.Prompt
+	for _, p := range list.Prompts {
+		if p.Name == "design" {
+			found = p
+		}
+	}
+	if found == nil {
+		t.Fatal("no design prompt")
+	}
+	for _, a := range found.Arguments {
+		if a.Required {
+			t.Errorf("design prompt requires %q", a.Name)
+		}
+	}
+
+	res, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "design"})
+	if err != nil {
+		t.Fatalf("design without arguments: %v", err)
+	}
+	text := res.Messages[0].Content.(*mcp.TextContent).Text
+	for _, want := range []string{
+		"architect",
+		"Ask the user what they want to make",
+		"Name the project yourself",
+		"list_projects",
+		"creates the project",
+		"single part or several",
+		"printpipe://templates/single-part",
+		"printpipe://templates/multi-part",
+		"printpipe://guides/fits",
+		"Definition of done",
+		"printpipe://guides/printability",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("design prompt is missing %q", want)
+		}
+	}
+
+	withIdea, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "design", Arguments: map[string]string{"idea": "a desk organiser for pens and an iPad"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = withIdea.Messages[0].Content.(*mcp.TextContent).Text
+	if !strings.Contains(text, "a desk organiser for pens and an iPad") || strings.Contains(text, "Ask the user what they want to make") {
+		t.Errorf("idea not used:\n%s", text[:300])
+	}
+}
+
 func TestAssemblyPrompt(t *testing.T) {
 	cs, _ := connectWithAssembly(t)
 	list, err := cs.ListPrompts(ctx, nil)
-	if err != nil || len(list.Prompts) != 6 {
+	if err != nil || len(list.Prompts) != 7 {
 		t.Fatalf("%v %+v", err, list)
 	}
 	res, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "add_assembly_timeline", Arguments: map[string]string{"project": "upio-orbit", "order": "cap, ring, sun"}})

@@ -19,6 +19,7 @@ optional.
 
 | Task | Read first |
 | --- | --- |
+| Just an idea, or nothing yet: no project | **Architect mode** below, then the row that fits what you decided |
 | New single part (bracket, clip, holder) | [modeling](references/modeling.md), then [single_part.scad](templates/single_part.scad) |
 | New object with several printed parts | [modeling](references/modeling.md), [multi-part](references/multi-part.md), [multi_part.scad](templates/multi_part.scad) |
 | Anything that moves, snaps, screws, clicks or meshes | [fits](references/fits.md) |
@@ -48,12 +49,33 @@ printability, validation, tools, troubleshooting) and `printpipe://templates/<na
 Start from a template rather than a blank file. Details are in
 [modeling](references/modeling.md).
 
+## Architect mode: no project needed
+
+The user never has to create or name a project. When they describe something to make, or
+only say they want to design something, you are the CAD and 3D-printing architect:
+
+- If there is no idea yet, ask what to make, what it is for and what it must fit or hold, in
+  one short message.
+- Ask only for what you would otherwise guess, above all real measurements. Choose sensible
+  defaults for the rest and say what you chose.
+- Decide single part or several, the print orientation of each, and how they join. Share
+  that brief in a few lines, then carry on.
+- **Name the project yourself**: short, lowercase words joined by `-` (for example
+  `pipe-clamp-25mm`; letters, digits, `-` and `_`, at most 64 characters). Check
+  `list_projects` first and add `-2`, `-3` if the name is taken. Never write into an
+  existing project unless the user asked to change it.
+- Your first `compile_model` call with that name creates the project. Then follow the
+  workflow below.
+
+MCP clients get this as the `design` prompt, whose only argument (`idea`) is optional.
+
 ## Workflow
 
 1. **Pin down the requirements.** Get the real dimensions of anything the part must fit
    (measure, or ask), the material, and the printer (`list_printers` gives the build
    volume). Decide the parts, how each one prints, and how they join.
-2. **Write the model** from a template, in the house format.
+2. **Name the project** if it is new (see Architect mode), and **write the model** from a
+   template, in the house format.
 3. **Compile** with `compile_model` (full `scad_code`). Read the summary: size, "fits"
    line, every `INFO`/`CHECK` line and every OpenSCAD `WARNING`. Fix all warnings.
 4. **Look at the previews.** Check the overall proportions, the flat base on the bed and
