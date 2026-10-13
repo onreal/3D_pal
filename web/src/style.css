@@ -132,6 +132,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); width
 .toolpath-stage { flex: 1; min-height: 240px; background: var(--viewer-bg); }
 .toolpath-canvas { display: block; width: 100%; height: 100%; }
 .toolpaths > p { margin: 6px 10px; }
+.follow-print { margin-left: auto; font-weight: 600; }
+.toolpaths > p.live { margin: 0; padding: 6px 10px; background: var(--accent-soft); border-bottom: 1px solid var(--border); }
 
 .sidebar { border-left: 1px solid var(--border); overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; background: var(--bg); }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow); }

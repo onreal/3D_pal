@@ -86,6 +86,7 @@ type Report struct {
 	TotalLayer  int     `json:"total_layer_num"`
 	PrintError  int     `json:"print_error"`
 	SubtaskName string  `json:"subtask_name"`
+	Remaining   int     `json:"mc_remaining_time"` // minutes
 }
 
 // Reply is the printer's answer to a command: the command echoed with its result.
@@ -282,7 +283,8 @@ func (p *Printer) Status(ctx context.Context) (printer.Status, error) {
 	if err != nil {
 		return printer.Status{State: printer.Offline, Message: hint(err)}, err
 	}
-	st := printer.Status{Progress: rep.Percent / 100, Layer: rep.Layer, TotalLayers: rep.TotalLayer}
+	st := printer.Status{Progress: rep.Percent / 100, Layer: rep.Layer, TotalLayers: rep.TotalLayer,
+		Remaining: rep.Remaining * 60, JobName: strings.TrimSuffix(rep.SubtaskName, ".gcode.3mf")}
 	switch rep.GcodeState {
 	case "RUNNING", "PREPARE", "SLICING":
 		st.State = printer.Printing

@@ -4,6 +4,7 @@ package pipelinetest
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
@@ -85,6 +86,8 @@ func (c *CountingSlicer) Last() slicer.Input { c.mu.Lock(); defer c.mu.Unlock();
 func (c *CountingSlicer) Calls() int { c.mu.Lock(); defer c.mu.Unlock(); return c.calls }
 
 type Env struct {
+	DB       *sql.DB
+	Deps     pipeline.Deps // what Svc was built with, to build a second one (a restart)
 	Svc      *pipeline.Service
 	SCAD     *scad.Compiler
 	Projects *project.Store
@@ -135,13 +138,14 @@ func New(t testing.TB) *Env {
 	js := jobs.NewStore(db)
 	projects := project.NewStore(db, work)
 	scadC := scad.New(fr, "openscad")
-	svc := pipeline.New(pipeline.Deps{
+	deps := pipeline.Deps{
 		DB: db, Runner: fr, Config: cfg, Jobs: js, Projects: projects,
 		SCAD: scadC, Slicers: slicer.Set{"fake": sl}, Events: rec,
 		NewPrinter: func(config.Printer) (printer.Printer, error) { return p, nil },
 		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		PollEvery:  10 * time.Millisecond,
-	})
+	}
+	svc := pipeline.New(deps)
 	t.Cleanup(svc.Close)
-	return &Env{Svc: svc, SCAD: scadC, Projects: projects, Printer: p, Slicer: sl, Events: rec, Config: cfg, Jobs: js, Work: work, Runner: fr}
+	return &Env{DB: db, Deps: deps, Svc: svc, SCAD: scadC, Projects: projects, Printer: p, Slicer: sl, Events: rec, Config: cfg, Jobs: js, Work: work, Runner: fr}
 }

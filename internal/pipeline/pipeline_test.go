@@ -486,3 +486,50 @@ func TestRefusedStartIsNotPrinted(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFollowingAPrint(t *testing.T) {
+	e := newEnv(t)
+	var mu sync.Mutex
+	var seen []map[string]any
+	e.Events.Next = func(typ string, v any) {
+		if m, ok := v.(map[string]any); ok && typ == "printer" {
+			mu.Lock()
+			seen = append(seen, m)
+			mu.Unlock()
+		}
+	}
+	a := mustRequestApproval(t, e, "cube")
+	e.Svc.Approve(a.Job.ID)
+	if _, err := e.Svc.Print(ctx, a.Job.ID); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	mu.Lock()
+	var withJob int
+	for _, m := range seen {
+		if j, ok := m["print_job"].(jobs.Job); ok && j.ID == a.Job.ID {
+			withJob++
+		}
+	}
+	mu.Unlock()
+	if withJob == 0 {
+		t.Fatal("status events do not name the job being printed")
+	}
+	ps, _ := e.Svc.Printers(ctx, true)
+	if ps[0].Job == nil || ps[0].Job.ID != a.Job.ID || ps[0].Status.JobName != "cube_v1" || ps[0].Status.Remaining <= 0 {
+		t.Fatalf("%+v %+v", ps[0].Job, ps[0].Status)
+	}
+
+	// A restarted server finds the job from the name the printer reports.
+	again := pipeline.New(e.Deps)
+	defer again.Close()
+	ps, _ = again.Printers(ctx, true)
+	if ps[0].Job == nil || ps[0].Job.ID != a.Job.ID {
+		t.Fatalf("after a restart: %+v", ps[0].Job)
+	}
+	// Idle printers follow nothing.
+	e.Svc.Cancel(ctx, "")
+	if ps, _ = again.Printers(ctx, true); ps[0].Job != nil {
+		t.Fatalf("idle printer has job %+v", ps[0].Job)
+	}
+}

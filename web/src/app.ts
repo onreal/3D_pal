@@ -1,4 +1,4 @@
-import { api, urls, type Job, type PrinterInfo, type ProjectSummary, type Settings } from "./api";
+import { api, urls, type Job, type PrinterInfo, type PrinterStatus, type ProjectSummary, type Settings } from "./api";
 import { debounce, download, h, replace, toast } from "./dom";
 import { AssemblyPanel } from "./assembly/panel";
 import { EstimatePanel } from "./estimates/panel";
@@ -161,7 +161,7 @@ export class App {
 
   private async loadToolpaths() {
     if (!this.project) return;
-    const src = this.toolpathSource ?? { url: urls.slice(this.project, this.version, this.printerId) };
+    const src = this.toolpathSource ?? (this.toolpaths.following ? { url: this.toolpaths.followUrl! } : { url: urls.slice(this.project, this.version, this.printerId) });
     await this.toolpaths.load(src.url, this.currentPrinter()?.capabilities.build_volume ?? { X: 256, Y: 256, Z: 256 });
   }
 
@@ -172,6 +172,7 @@ export class App {
     this.printerSelect.addEventListener("change", () => {
       this.printerId = this.printerSelect.value;
       this.applyPrinter();
+      this.syncPrint(this.currentPrinter()?.print_job ?? null, this.currentPrinter()?.status ?? null);
       void this.refreshProject();
     });
     this.printBtn.addEventListener("click", () => {
@@ -222,7 +223,19 @@ export class App {
     this.live.on("printer", (e) => {
       this.status.receive(e.printer_id, e.status);
       if (e.job) this.job.show({ job: e.job });
+      if (e.printer_id === this.printerId) this.syncPrint(e.print_job ?? null, e.status);
     });
+    this.toolpaths.onFollowChange = () => {
+      if (this.tab === "toolpaths") void this.loadToolpaths();
+    };
+    this.status.onWatch = () => {
+      if (!this.toolpaths.followUrl) {
+        toast("This print was not sent from here, so there are no toolpaths to follow.", "info");
+        return;
+      }
+      this.toolpaths.follow();
+      this.showTab("toolpaths");
+    };
     this.live.on("session", (e) => {
       this.sessions.receive(e.session);
       if (!e.session.open && this.follow.mode === "session" && this.follow.id === e.session.id) {
@@ -287,6 +300,12 @@ export class App {
     }
   }
 
+  /** Hands the selected printer's print to the toolpath view, loading its file if it follows. */
+  private syncPrint(job: Job | null, status: PrinterStatus | null) {
+    const url = job ? urls.jobFile(job.project, job.id) : null;
+    if (this.toolpaths.setPrint(url, status) && this.tab === "toolpaths") void this.loadToolpaths();
+  }
+
   private async loadPrinters() {
     try {
       this.printers = await api.printers();
@@ -298,6 +317,8 @@ export class App {
     replace(this.printerSelect, ...this.printers.map((p) => h("option", { value: p.id, selected: p.id === this.printerId }, p.name)));
     this.printerSelect.disabled = this.printers.length < 2;
     this.printBtn.disabled = this.printers.length === 0;
+    const cur = this.currentPrinter();
+    this.syncPrint(cur?.print_job ?? null, cur?.status ?? null);
     this.applyPrinter();
   }
 

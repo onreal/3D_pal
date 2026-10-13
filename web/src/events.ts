@@ -7,7 +7,7 @@ export interface EventMap {
   model: FromSession & { project: string; version: number; size_mm: Vec; fits: boolean };
   job: FromSession & Partial<Approval> & { job: Job };
   estimate: FromSession & Estimate;
-  printer: FromSession & { printer_id: string; status: PrinterStatus; job?: Job };
+  printer: FromSession & { printer_id: string; status: PrinterStatus; job?: Job; print_job?: Job };
   settings: { saved_at: string };
   session: { kind: "opened" | "updated" | "closed"; session: SessionInfo };
   assembly: AssemblyResult;

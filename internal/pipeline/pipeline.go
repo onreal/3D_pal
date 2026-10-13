@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -59,11 +60,14 @@ type Service struct {
 	est *estimates.Service
 
 	watchMu  sync.Mutex
-	watching map[string]context.CancelFunc
+	watching map[string]*watcher
 	locks    sync.Map // project name → *sync.Mutex
 
 	sendMu  sync.Mutex
 	sending map[string]bool // job IDs being sent to a printer
+
+	activeMu sync.Mutex
+	active   map[string]jobs.Job // printer ID → the job it prints, or printed last
 }
 
 func New(d Deps) *Service {
@@ -74,7 +78,7 @@ func New(d Deps) *Service {
 		d.ViewerURL = "http://localhost:8080"
 	}
 	if d.PollEvery == 0 {
-		d.PollEvery = 5 * time.Second
+		d.PollEvery = 3 * time.Second
 	}
 	if d.NewPrinter == nil {
 		runner := d.Runner
@@ -86,7 +90,7 @@ func New(d Deps) *Service {
 			return drv.New(p.Config, printer.Deps{Runner: runner})
 		}
 	}
-	s := &Service{d: d, watching: map[string]context.CancelFunc{}}
+	s := &Service{d: d, watching: map[string]*watcher{}}
 	// Calls cut off by a restart never finished; say so instead of leaving them running.
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	d.DB.Exec(`UPDATE runs SET exit_code = 1, message = 'interrupted: the server restarted during this call',
@@ -434,6 +438,8 @@ type PrinterInfo struct {
 	SystemProfiles map[string]string `json:"system_profiles,omitempty"`
 	Status         *printer.Status   `json:"status,omitempty"`
 	Error          string            `json:"error,omitempty"`
+	// Job is the job the printer is printing (or just finished), to follow it in the viewer.
+	Job *jobs.Job `json:"print_job,omitempty"`
 }
 
 // Printers lists the configured printers; withStatus also asks each one for its state.
@@ -471,6 +477,13 @@ func (s *Service) Printers(ctx context.Context, withStatus bool) ([]PrinterInfo,
 				info.Error = err.Error()
 			} else {
 				info.Status = &st
+				if job, ok := s.jobFor(cp.ID, st); ok {
+					info.Job = &job
+				}
+				// After a server restart nothing watches a running print: start again.
+				if st.State == printer.Printing || st.State == printer.Paused {
+					s.ensureWatch(cp, p)
+				}
 			}
 		}
 		out = append(out, info)
@@ -1022,6 +1035,7 @@ func (s *Service) Print(ctx context.Context, jobID string) (PrintResult, error) 
 		}
 		res = PrintResult{Job: job, Printer: cp.Name, Remote: remote.ID, Status: printer.Status{State: printer.Printing}}
 		res.Job.Printed = true
+		s.setActive(cp.ID, res.Job)
 		if caps.Has(printer.FeatureStatus) {
 			if st, err := p.Status(ctx); err == nil {
 				res.Status = st
@@ -1056,17 +1070,74 @@ func (s *Service) release(jobID string) {
 	s.sendMu.Unlock()
 }
 
+func (s *Service) setActive(printerID string, job jobs.Job) {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	if s.active == nil {
+		s.active = map[string]jobs.Job{}
+	}
+	s.active[printerID] = job
+}
+
+// jobFor is the job a printer status belongs to: the one this server sent, or, after a
+// restart, the last printed job matching the name the printer reports ("cube_v3").
+func (s *Service) jobFor(printerID string, st printer.Status) (jobs.Job, bool) {
+	if st.State == printer.Idle || st.State == printer.Offline {
+		return jobs.Job{}, false
+	}
+	s.activeMu.Lock()
+	job, ok := s.active[printerID]
+	s.activeMu.Unlock()
+	if ok && (st.JobName == "" || st.JobName == fmt.Sprintf("%s_v%d", job.Project, job.Version)) {
+		return job, true
+	}
+	i := strings.LastIndex(st.JobName, "_v")
+	if i <= 0 {
+		return jobs.Job{}, false
+	}
+	v, err := strconv.Atoi(st.JobName[i+2:])
+	if err != nil {
+		return jobs.Job{}, false
+	}
+	job, err = s.d.Jobs.LastPrinted(printerID, st.JobName[:i], v)
+	if err != nil {
+		return jobs.Job{}, false
+	}
+	s.setActive(printerID, job)
+	return job, true
+}
+
+type watcher struct{ cancel context.CancelFunc }
+
+// ensureWatch starts watching a printer unless it is watched already.
+func (s *Service) ensureWatch(cp config.Printer, p printer.Printer) {
+	s.watchMu.Lock()
+	_, watched := s.watching[cp.ID]
+	s.watchMu.Unlock()
+	if !watched {
+		s.watch(cp, p)
+	}
+}
+
 // watch polls a printer's status during a print and publishes it to the viewer (PRD FR-14, V-14).
 func (s *Service) watch(cp config.Printer, p printer.Printer) {
 	s.watchMu.Lock()
-	if cancel, ok := s.watching[cp.ID]; ok {
-		cancel()
+	if w, ok := s.watching[cp.ID]; ok {
+		w.cancel()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 48*time.Hour)
-	s.watching[cp.ID] = cancel
+	w := &watcher{cancel: cancel}
+	s.watching[cp.ID] = w
 	s.watchMu.Unlock()
 	go func() {
-		defer cancel()
+		defer func() {
+			cancel()
+			s.watchMu.Lock()
+			if s.watching[cp.ID] == w { // a newer watch may have replaced this one
+				delete(s.watching, cp.ID)
+			}
+			s.watchMu.Unlock()
+		}()
 		t := time.NewTicker(s.d.PollEvery)
 		defer t.Stop()
 		misses := 0
@@ -1088,7 +1159,11 @@ func (s *Service) watch(cp config.Printer, p printer.Printer) {
 				continue
 			}
 			misses = 0
-			s.d.Events.Publish(events.Printer, map[string]any{"printer_id": cp.ID, "status": st})
+			ev := map[string]any{"printer_id": cp.ID, "status": st}
+			if job, ok := s.jobFor(cp.ID, st); ok {
+				ev["print_job"] = job
+			}
+			s.d.Events.Publish(events.Printer, ev)
 			if st.State != printer.Printing && st.State != printer.Paused {
 				return
 			}
@@ -1100,7 +1175,7 @@ func (s *Service) watch(cp config.Printer, p printer.Printer) {
 func (s *Service) Close() {
 	s.watchMu.Lock()
 	defer s.watchMu.Unlock()
-	for _, cancel := range s.watching {
-		cancel()
+	for _, w := range s.watching {
+		w.cancel()
 	}
 }

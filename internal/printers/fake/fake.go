@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,6 +60,7 @@ type Printer struct {
 	starts    int
 	started   time.Time
 	printing  bool
+	job       string
 	refuse    error
 }
 
@@ -122,6 +124,7 @@ func (p *Printer) Start(_ context.Context, r printer.Remote) error {
 	}
 	p.starts++
 	p.started, p.printing = p.now(), true
+	p.job = strings.TrimSuffix(r.ID, ".gcode.3mf")
 	return nil
 }
 
@@ -137,9 +140,10 @@ func (p *Printer) Status(context.Context) (printer.Status, error) {
 	const layers = 100
 	frac := float64(p.now().Sub(p.started)) / float64(p.printTime)
 	if frac >= 1 {
-		return printer.Status{State: printer.Finished, Progress: 1, Layer: layers, TotalLayers: layers}, nil
+		return printer.Status{State: printer.Finished, Progress: 1, Layer: layers, TotalLayers: layers, JobName: p.job}, nil
 	}
-	return printer.Status{State: printer.Printing, Progress: frac, Layer: int(frac * layers), TotalLayers: layers}, nil
+	left := int((1 - frac) * p.printTime.Seconds())
+	return printer.Status{State: printer.Printing, Progress: frac, Layer: 1 + int(frac*layers), TotalLayers: layers, Remaining: left, JobName: p.job}, nil
 }
 
 func (p *Printer) Cancel(context.Context) error {

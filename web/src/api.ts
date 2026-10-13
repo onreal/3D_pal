@@ -59,7 +59,15 @@ export interface Approval { job: Job; estimate: Estimate; printer_name: string; 
 
 export type PrinterState = "idle" | "printing" | "paused" | "finished" | "failed" | "offline";
 
-export interface PrinterStatus { state: PrinterState; progress: number; layer: number; total_layers: number; message?: string }
+export interface PrinterStatus {
+  state: PrinterState;
+  progress: number;
+  layer: number;
+  total_layers: number;
+  message?: string;
+  remaining_s?: number; // the printer's own estimate
+  job_name?: string;
+}
 
 export interface Capabilities {
   model: string;
@@ -78,6 +86,7 @@ export interface PrinterInfo {
   capabilities: Capabilities;
   profiles: Record<string, string> | null;
   system_profiles?: Record<string, string>; // the slicer's own preset used for each kind left empty
+  print_job?: Job; // what the printer is printing (or just finished)
   status?: PrinterStatus;
   error?: string;
 }

@@ -123,6 +123,20 @@ func (s *Store) MarkPrinted(id string) error {
 	return err
 }
 
+// LastPrinted is the most recent job sent to a printer for a project version.
+func (s *Store) LastPrinted(printerID, project string, version int) (Job, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM jobs WHERE printer_id = ? AND project = ? AND version = ? AND printed_at IS NOT NULL
+		ORDER BY printed_at DESC LIMIT 1`, printerID, project, version).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, ErrNotFound
+	}
+	if err != nil {
+		return Job{}, err
+	}
+	return s.Get(id)
+}
+
 // Pending lists approved-or-waiting jobs that were not printed yet, newest first.
 func (s *Store) Pending(project string) ([]Job, error) {
 	rows, err := s.db.Query(`SELECT id FROM jobs WHERE project = ? AND printed_at IS NULL ORDER BY created_at DESC`, project)

@@ -11,6 +11,8 @@ export class PrinterStatusBar {
   private printer: PrinterInfo | null = null;
   private status: PrinterStatus | null = null;
   private error = "";
+  /** Opens the live toolpath view of the running print. */
+  onWatch: () => void = () => {};
 
   set(printer: PrinterInfo | null) {
     this.printer = printer;
@@ -50,6 +52,7 @@ export class PrinterStatusBar {
       h("span", { class: "small", title: this.error || undefined }, `${LABELS[state]}`),
       active ? h("progress", { max: 100, value: pct, "aria-label": "Print progress" }) : null,
       active ? h("span", { class: "small" }, `${pct}%${st?.total_layers ? ` · layer ${st.layer}/${st.total_layers}` : ""}`) : null,
+      active ? h("button", { class: "link small", type: "button", "data-testid": "watch-print", onclick: () => this.onWatch() }, "Watch") : null,
       active ? cancel : null);
   }
 }

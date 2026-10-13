@@ -76,6 +76,8 @@ const asmSTL = [
 
 export interface StubOptions {
   size?: number;
+  /** The A1 is printing job 1a2b3c4d (cube v1), at this layer of 100. */
+  printingLayer?: number;
   jobs?: unknown[];
   requests?: { method: string; url: string; body: string | null }[];
 }
@@ -101,7 +103,12 @@ export async function stubApi(page: Page, opts: StubOptions = {}) {
       return s ? json(route, { session: s, runs: [{ session: id, client: s.client, project: "cube", tool: "compile_model", args: "{}", exit_code: 0, message: "ok", started_at: "2026-10-12T10:05:00Z" }] }) : json(route, { error: "no such session" }, 404);
     }
     if (path.startsWith("/api/sessions/") && req.method() === "DELETE") return json(route, { ok: true });
-    if (path === "/api/printers") return json(route, [A1]);
+    if (path === "/api/printers") {
+      if (opts.printingLayer === undefined) return json(route, [A1]);
+      return json(route, [{ ...A1,
+        status: { state: "printing", progress: opts.printingLayer / 100, layer: opts.printingLayer, total_layers: 100, remaining_s: 3900, job_name: "cube_v1" },
+        print_job: { id: "1a2b3c4d", project: "cube", version: 1, printer_id: "a1", approved: true, printed: true } }]);
+    }
     if (path === "/api/printers/a1/presets" && req.method() === "GET") return json(route, presets);
     if (path === "/api/printers/a1/presets" && req.method() === "POST") {
       const { kind, name } = JSON.parse(req.postData() ?? "{}");

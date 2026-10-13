@@ -73,7 +73,7 @@ func startFakeA1(t *testing.T, serial, code string) *fakeA1 {
 		a.mu.Lock()
 		switch {
 		case msg.Pushing != nil && msg.Pushing.Command == "pushall":
-			rep, _ := json.Marshal(map[string]any{"print": map[string]any{"command": "push_status", "gcode_state": a.state, "mc_percent": 42, "layer_num": 7, "total_layer_num": 100}})
+			rep, _ := json.Marshal(map[string]any{"print": map[string]any{"command": "push_status", "gcode_state": a.state, "mc_percent": 42, "layer_num": 7, "total_layer_num": 100, "mc_remaining_time": 12, "subtask_name": "cube_v1"}})
 			a.mu.Unlock()
 			s.Publish("device/"+serial+"/report", rep, false, 0)
 			return
@@ -130,7 +130,7 @@ func TestPahoAgainstAPrinterLikeBroker(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 	st, err := p.Status(ctx)
-	if err != nil || st.State != printer.Printing || st.Layer != 7 {
+	if err != nil || st.State != printer.Printing || st.Layer != 7 || st.Remaining != 720 || st.JobName != "cube_v1" {
 		t.Fatalf("%+v %v", st, err)
 	}
 	if err := p.Pause(ctx); err != nil {

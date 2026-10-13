@@ -58,6 +58,11 @@ type Status struct {
 	Layer       int     `json:"layer"`
 	TotalLayers int     `json:"total_layers"`
 	Message     string  `json:"message,omitempty"`
+	// Remaining is the printer's own estimate of the time left, in seconds (0 = unknown).
+	Remaining int `json:"remaining_s,omitempty"`
+	// JobName is the job the printer runs, as uploaded without the extension ("cube_v3"),
+	// when the printer reports it. It finds the job again after a server restart.
+	JobName string `json:"job_name,omitempty"`
 }
 
 type Job struct{ Path, Name string } // local file in the printer's JobFormat

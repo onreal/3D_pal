@@ -264,6 +264,15 @@ print** sends it. **Approve only** leaves it for the agent's `print_job`, and **
 printer** sends an approved job later. A job prints once: **Print again** on a printed job
 slices a new job for the same version, which you approve the same way.
 
+**Following a print.** While the printer runs a job sent from here, the status bar shows
+**Watch**. It opens the Toolpaths tab on the exact file the printer is running, with **Follow
+print** on. You see the layers printed so far, the current layer marked, and the layer,
+percent and time left as the printer reports them (every 3 s). The printer reports its
+layer but not the nozzle's position, so the path within the current layer is an estimate,
+paced by how long the previous layer took. It corrects itself at each new layer. Moving the
+layer slider stops following. After a server restart, the print is found again from the
+name the printer reports.
+
 **"MQTT verification failed, update studio to include the network plugin"** on the
 printer's screen, or "printer refused the command … Developer Mode" in the viewer: since
 Bambu's 2025 authorization firmware, the A1 takes print commands only from Bambu's own
