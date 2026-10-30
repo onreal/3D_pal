@@ -8,8 +8,8 @@ import { HistoryPanel } from "./history/panel";
 import { JobPanel } from "./job/panel";
 import { LogPanel } from "./log/panel";
 import { ParamsPanel } from "./params/panel";
-import { clientLabel, decodeFollow, encodeFollow, follows, type Follow } from "./sessions/follow";
-import { SessionsPanel } from "./sessions/panel";
+import { clientKey, clientLabel, decodeFollow, encodeFollow, follows, type Follow } from "./sessions/follow";
+import { groupByClient, SessionsPanel } from "./sessions/panel";
 import { PrinterStatusBar } from "./printer/status";
 import { ToolpathPreview } from "./toolpaths/preview";
 import type { View } from "./viewer/controls";
@@ -249,6 +249,7 @@ export class App {
     });
     this.sessions.onFollow = (f) => this.setFollow(f);
     this.sessions.onOpenProject = (p) => void this.openProject(p, 0).then(() => this.loadProjects());
+    this.sessions.onCleared = () => this.setFollow({ mode: "all" });
     this.live.on("assembly", (r) => this.assembly.receive(r));
     this.rendering.onBusy = (busy) => this.canvasHost.classList.toggle("rendering", busy);
     this.live.on("render", (e) => this.rendering.receive(e));
@@ -271,20 +272,29 @@ export class App {
     }
     this.sessions.setFollow(f);
     this.renderFollow();
-    if (f.mode === "session") {
-      const s = this.sessions.open.find((x) => x.id === f.id);
+    if (f.mode === "session" || f.mode === "client") {
+      const s = this.sessions.open.find((x) => f.mode === "session" ? x.id === f.id : clientKey(x.client) === clientKey(f.client));
       if (s?.project && s.project !== this.project) void this.openProject(s.project, 0).then(() => this.loadProjects());
     }
   }
 
   private renderFollow() {
     const open = this.sessions.open;
+    const clients = groupByClient(open);
     if (this.follow.mode === "session" && !open.some((s) => this.follow.mode === "session" && s.id === this.follow.id)) {
       this.follow = { mode: "all" };
     }
+    if (this.follow.mode === "client" && !open.some((s) => this.follow.mode === "client" && clientKey(s.client) === clientKey(this.follow.client))) {
+      this.follow = { mode: "all" };
+    }
+    const selectedSession = this.follow.mode === "session" ? open.find((s) => this.follow.mode === "session" && s.id === this.follow.id) : undefined;
     replace(this.followSelect,
-      h("option", { value: "all" }, `All sessions (${open.length})`),
-      ...open.map((s) => h("option", { value: `session:${s.id}` }, `${clientLabel(s)}${s.project ? ` · ${s.project}` : ""}`)),
+      h("option", { value: "all" }, `All clients (${clients.length})`),
+      ...clients.map((group) => {
+        const s = group[0]!;
+        return h("option", { value: `client:${s.client}` }, clientLabel(s));
+      }),
+      selectedSession ? h("option", { value: `session:${selectedSession.id}` }, `${clientLabel(selectedSession)} · one connection`) : null,
       h("option", { value: "none" }, "Nobody (stay here)"));
     this.followSelect.value = encodeFollow(this.follow);
   }

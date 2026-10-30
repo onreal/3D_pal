@@ -91,3 +91,36 @@ func TestIdentifyFillsInTheClient(t *testing.T) {
 		t.Fatalf("%+v events=%d", i, n)
 	}
 }
+
+func TestClearAllDisconnectsTogetherAndKeepsNewSessions(t *testing.T) {
+	r := sessions.NewRegistry()
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	for _, id := range []string{"a", "b"} {
+		id := id
+		r.Open(id, "same-client", "1", "", sessions.HTTP, func() {
+			started <- id
+			<-release
+		})
+	}
+	r.Open("old", "same-client", "1", "", sessions.HTTP, nil)
+	r.Close("old")
+	done := make(chan int, 1)
+	go func() { done <- r.ClearAll() }()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("the connections did not begin closing together")
+		}
+	}
+	r.Open("new", "new-client", "1", "", sessions.HTTP, nil)
+	close(release)
+	if n := <-done; n != 2 {
+		t.Fatalf("disconnected %d connections, want 2", n)
+	}
+	list := r.List()
+	if len(list) != 1 || list[0].ID != "new" || !list[0].Open {
+		t.Fatalf("sessions after clearing: %+v", list)
+	}
+}

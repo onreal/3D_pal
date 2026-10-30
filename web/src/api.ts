@@ -240,6 +240,7 @@ export const api = {
   runs: () => request<Run[]>("GET", "/api/runs"),
   assembly: (p: string, v: number) => request<AssemblyResult>("GET", `/api/projects/${enc(p)}/versions/${v}/assembly`),
   sessions: () => request<SessionInfo[]>("GET", "/api/sessions"),
+  clearSessions: () => request<{ disconnected: number }>("DELETE", "/api/sessions"),
   session: (id: string) => request<{ session: SessionInfo; runs: Run[] }>("GET", `/api/sessions/${enc(id)}`),
   endSession: (id: string) => request<{ ok: boolean }>("DELETE", `/api/sessions/${enc(id)}`),
   startEstimate: (p: string, v: number, printerId: string) =>

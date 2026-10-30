@@ -11,11 +11,17 @@ describe("following sessions", () => {
     expect(follows(f, { session: "a" })).toBe(true);
     expect(follows(f, { session: "b" })).toBe(false);
   });
+  test("one client follows all its connections", () => {
+    const f = { mode: "client" as const, client: "Claude-Code" };
+    expect(follows(f, { session: "a", client: "claude-code" })).toBe(true);
+    expect(follows(f, { session: "b", client: "CLAUDE-CODE" })).toBe(true);
+    expect(follows(f, { session: "c", client: "other" })).toBe(false);
+  });
   test("none never switches", () => {
     expect(follows({ mode: "none" }, { session: "a" })).toBe(false);
   });
   test("round trip through storage", () => {
-    for (const f of [{ mode: "all" as const }, { mode: "none" as const }, { mode: "session" as const, id: "XYZ" }]) {
+    for (const f of [{ mode: "all" as const }, { mode: "none" as const }, { mode: "session" as const, id: "XYZ" }, { mode: "client" as const, client: "claude-code" }]) {
       expect(decodeFollow(encodeFollow(f))).toEqual(f);
     }
     expect(decodeFollow("garbage")).toEqual({ mode: "all" });

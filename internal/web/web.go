@@ -78,6 +78,7 @@ func Handler(svc *pipeline.Service, cfg *config.Store, hub *events.Hub, assets f
 	mux.HandleFunc("GET /api/projects/{name}/versions/{v}/assembly", s.getAssembly)
 	mux.HandleFunc("GET /api/projects/{name}/versions/{v}/assembly/parts/{i}", s.assemblyPart)
 	mux.HandleFunc("GET /api/sessions", s.listSessions)
+	mux.HandleFunc("DELETE /api/sessions", s.clearSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", s.getSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.endSession)
 
@@ -898,6 +899,10 @@ func (s *Server) trackMCP(h http.Handler) http.Handler {
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.sessions.List())
+}
+
+func (s *Server) clearSessions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"disconnected": s.sessions.ClearAll()})
 }
 
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {

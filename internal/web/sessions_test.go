@@ -166,6 +166,39 @@ func TestAdminCanEndASession(t *testing.T) {
 	}
 }
 
+func TestAdminCanClearAllSessions(t *testing.T) {
+	m := setupMulti(t)
+	a := m.connect(t, "claude-code")
+	b := m.connect(t, "claude-code")
+	waitFor(t, "two open sessions", func() bool { return m.reg.OpenCount() == 2 })
+	req, _ := http.NewRequest("DELETE", m.srv.URL+"/api/sessions", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result struct{ Disconnected int }
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || result.Disconnected != 2 {
+		t.Fatalf("clear all: status %d, disconnected %d", resp.StatusCode, result.Disconnected)
+	}
+	var list []sessions.Info
+	m.get(t, "/api/sessions", &list)
+	if len(list) != 0 {
+		t.Fatalf("sessions still listed: %+v", list)
+	}
+	for _, cs := range []*mcp.ClientSession{a, b} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "list_printers"})
+		cancel()
+		if err == nil {
+			t.Fatal("a cleared session still answered")
+		}
+	}
+}
+
 func TestEventsNameTheSession(t *testing.T) {
 	m := setupMulti(t)
 	var mu sync.Mutex

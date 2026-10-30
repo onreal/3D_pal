@@ -17,9 +17,10 @@ One long-running container is the server. It serves:
 
 Any number of agent sessions connect to it at the same time: Claude Code over HTTP,
 Claude Desktop (stdio only) through a small bridge inside the container, several windows
-of either. The viewer's **Sessions** panel lists every open session with the client that
-holds it (name, version, transport, address, user agent), its tool calls and the project
-it works on. Follow one session or all of them, and end a session from there if needed.
+of either. The viewer's **Clients** panel shows each client once, with its connections
+grouped underneath. Expand a client to see each connection's transport, tool calls and
+project. Follow a client or one connection, end a connection, or use **Clear all clients**
+to disconnect every active connection and clear the recent list.
 Every tool call in the run log names its session and client.
 
 ## Quick start
@@ -82,7 +83,7 @@ server loses nothing.
 
 Start the server first (`./printpipe.sh up`). The MCP endpoint is
 `http://127.0.0.1:8080/mcp` (Streamable HTTP). Every client below joins the same server,
-and each appears as its own session in the viewer.
+and its connections appear under one client in the viewer.
 
 ### Claude Code (HTTP)
 
@@ -98,8 +99,8 @@ claude mcp add --transport http print-pipeline -s user http://127.0.0.1:8080/mcp
 
 `-s user` makes it available in every project; use `-s project` to share it through
 `.mcp.json` in a repository, or `-s local` for this folder only. In a session, `/mcp`
-lists the server and its ten tools. Open several Claude Code sessions and each shows up
-separately in the viewer.
+lists the server and its ten tools. Open several Claude Code sessions and the viewer groups
+their connections under Claude Code.
 
 ### Claude Desktop (stdio, bridged)
 
@@ -143,7 +144,7 @@ HTTP clients point at `http://127.0.0.1:8080/mcp`. For stdio-only clients withou
 
 1. `./printpipe.sh status` shows the server running and the image built.
 2. In a new session, ask: "List the printers." The agent calls `list_printers`, and the
-   session appears in the viewer's Sessions panel with its client name.
+   client appears in the viewer's Clients panel.
 3. Ask: "Make a 20 mm calibration cube, project name test-cube." The cube appears at
    <http://localhost:8080> and the agent shows preview images.
 
@@ -154,7 +155,7 @@ HTTP clients point at `http://127.0.0.1:8080/mcp`. For stdio-only clients withou
 | `/mcp` says failed or CONNECTION_CLOSED | The server is not running: `./printpipe.sh up`, then reconnect in `/mcp`. `./printpipe.sh status` shows the state. |
 | An older registration runs `docker run -i …` and fails | Re-register with `./printpipe.sh mcp-add local` (or `user`). The old one-container-per-session setup conflicted on port 8080. |
 | "image print-pipeline:latest not found" | `./printpipe.sh build` |
-| A session is stuck, or its client is gone | End it in the viewer's Sessions panel; idle sessions also close after 12 hours. |
+| A session is stuck, or its client is gone | End its connection in the viewer's Clients panel, or use **Clear all clients** to disconnect everything; idle sessions also close after 12 hours. |
 | Port 8080 is taken by another program | `PRINTPIPE_PORT=8090 ./printpipe.sh up` and `PRINTPIPE_PORT=8090 ./printpipe.sh mcp-add`. |
 | Very slow on Apple Silicon | Turn on Rosetta emulation in Docker Desktop settings. |
 | The printer shows **Status unavailable** | The printer is on the network but its MQTT status service (port 8883) isn't answering; a print keeps running. The A1 takes only a few MQTT clients: close Bambu Studio or Handy if they're connected over LAN. If it persists, restart the printer once it's idle. The server keeps one connection per printer and reads what the printer pushes, so it doesn't add load. |

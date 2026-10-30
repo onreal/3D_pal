@@ -168,6 +168,43 @@ func (r *Registry) End(id string) bool {
 	return true
 }
 
+// ClearAll disconnects every currently open session and removes the sessions that
+// were listed when the action began. A session opened afterward remains listed.
+func (r *Registry) ClearAll() int {
+	r.mu.Lock()
+	ids := make([]string, 0, len(r.byID))
+	closers := make([]func(), 0, len(r.closers))
+	for id, info := range r.byID {
+		ids = append(ids, id)
+		if info.Open {
+			if closer := r.closers[id]; closer != nil {
+				closers = append(closers, closer)
+			}
+		}
+	}
+	r.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, closer := range closers {
+		wg.Add(1)
+		go func(closeSession func()) {
+			defer wg.Done()
+			closeSession()
+		}(closer)
+	}
+	wg.Wait()
+	for _, id := range ids {
+		r.Close(id)
+	}
+	r.mu.Lock()
+	for _, id := range ids {
+		delete(r.byID, id)
+		delete(r.closers, id)
+	}
+	r.mu.Unlock()
+	return len(closers)
+}
+
 func (r *Registry) Get(id string) (Info, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
